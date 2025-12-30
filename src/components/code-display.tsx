@@ -22,6 +22,7 @@ interface CodeDisplayProps {
   report?: EmisReport;
   isExpanding?: boolean;
   totalValueSets?: number;
+  onCancel?: () => void;
 }
 
 const getCodeSystemBadgeClass = (codeSystem?: string): string => {
@@ -51,7 +52,7 @@ const getCodeSystemBadgeClass = (codeSystem?: string): string => {
   return 'text-xs bg-gray-50 text-gray-700 border-gray-200';
 };
 
-export default function CodeDisplay({ expandedCodes, report, isExpanding, totalValueSets }: CodeDisplayProps) {
+export default function CodeDisplay({ expandedCodes, report, isExpanding, totalValueSets, onCancel }: CodeDisplayProps) {
   const [copiedButton, setCopiedButton] = useState<number | 'all' | null>(null);
   const [expandedValueSets, setExpandedValueSets] = useState<Set<number>>(new Set());
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
@@ -177,15 +178,28 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
         if (isExpanding) {
           return (
             <Card className="border-blue-200 bg-blue-50/50">
-              <div className="px-4 py-3 flex items-center gap-2">
-                <Loader2 className="w-5 h-5 text-blue-600 flex-shrink-0 animate-spin" />
-                <div>
-                  <p className="font-semibold text-blue-900">Expanding codes...</p>
-                  <p className="text-sm text-blue-700">
-                    Processing {completedValueSets} of {totalValueSets || completedValueSets} ValueSet{(totalValueSets || completedValueSets) !== 1 ? 's' : ''}
-                    {totalFailedCodes > 0 && ` • ${totalFailedCodes} code${totalFailedCodes !== 1 ? 's' : ''} failed so far`}
-                  </p>
+              <div className="px-4 py-3 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Loader2 className="w-5 h-5 text-blue-600 flex-shrink-0 animate-spin" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-blue-900">Expanding codes...</p>
+                    <p className="text-sm text-blue-700">
+                      Processing {completedValueSets} of {totalValueSets || completedValueSets} ValueSet{(totalValueSets || completedValueSets) !== 1 ? 's' : ''}
+                      {totalFailedCodes > 0 && ` • ${totalFailedCodes} code${totalFailedCodes !== 1 ? 's' : ''} failed so far`}
+                    </p>
+                  </div>
                 </div>
+                {onCancel && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={onCancel}
+                    className="gap-2 flex-shrink-0"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    Cancel
+                  </Button>
+                )}
               </div>
             </Card>
           );
@@ -213,7 +227,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                   <div>
                     <p className="font-semibold text-green-900">All codes successfully mapped</p>
                     <p className="text-sm text-green-700">
-                      All {completedValueSets} ValueSet{completedValueSets !== 1 ? 's' : ''} expanded without errors
+                      {completedValueSets === 1 ? 'ValueSet' : `All ${completedValueSets} ValueSets`} expanded without errors
                     </p>
                   </div>
                 </>
@@ -357,9 +371,9 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                   CSV
                                 </Button>
                               </div>
-                              <div className="border rounded-md bg-background">
+                              <div className="border rounded-md bg-background max-h-96 overflow-y-auto">
                                 <Table>
-                                  <TableHeader>
+                                  <TableHeader className="sticky top-0 bg-background">
                                     <TableRow>
                                       <TableHead className="w-32 whitespace-nowrap">Code</TableHead>
                                       <TableHead className="min-w-[150px]">Display</TableHead>

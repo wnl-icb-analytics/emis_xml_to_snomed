@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { EmisReport, ExpandedCodeSet } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, AlertCircle } from 'lucide-react';
+import { Loader2, FileText, AlertCircle, XCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
@@ -15,6 +15,7 @@ export default function ExploreMode() {
   const [isExpanding, setIsExpanding] = useState(false);
   const [hasXmlLoaded, setHasXmlLoaded] = useState(false);
   const [isCheckingXml, setIsCheckingXml] = useState(true);
+  const cancellationRef = useRef(false);
 
   // Check if XML is already loaded in IndexedDB on mount
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function ExploreMode() {
     if (!selectedReport) return;
 
     setIsExpanding(true);
+    cancellationRef.current = false;
 
     try {
       // Initialize expandedData with empty valueSetGroups
@@ -79,6 +81,13 @@ export default function ExploreMode() {
       const allConcepts = new Map<string, any>();
 
       for (let vsIndex = 0; vsIndex < selectedReport.valueSets.length; vsIndex++) {
+        // Check if expansion was cancelled
+        if (cancellationRef.current) {
+          setIsExpanding(false);
+          setExpandedData(null);
+          return;
+        }
+
         const vs = selectedReport.valueSets[vsIndex];
 
         // Use shared utility to expand the ValueSet
@@ -136,7 +145,14 @@ export default function ExploreMode() {
       });
     } finally {
       setIsExpanding(false);
+      cancellationRef.current = false;
     }
+  };
+
+  const handleCancel = () => {
+    cancellationRef.current = true;
+    setIsExpanding(false);
+    setExpandedData(null);
   };
 
   // Empty state when no XML loaded (only show after checking)
@@ -217,31 +233,38 @@ export default function ExploreMode() {
           </nav>
         )}
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-bold truncate">{selectedReport.searchName}</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {selectedReport.valueSets.length} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-          <Button
-            onClick={handleExpandReport}
-            disabled={isExpanding || !!expandedData}
-            size="lg"
-            className="flex-shrink-0 w-full sm:w-auto"
-          >
-            {isExpanding ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Expanding codes...
-              </>
-            ) : expandedData ? (
-              'Codes expanded'
-            ) : (
-              'Expand all codes'
-            )}
-          </Button>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-2xl font-bold truncate">{selectedReport.searchName}</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {selectedReport.valueSets.length} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''}
+          </p>
         </div>
+
+        {/* Prominent expand card - only show before expansion starts */}
+        {!expandedData && !isExpanding && (
+          <Card className="bg-primary/5 border-primary/20">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <FileText className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
+                  <p className="text-sm text-muted-foreground max-w-md">
+                    This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
+                  </p>
+                </div>
+                <Button
+                  onClick={handleExpandReport}
+                  size="lg"
+                  className="text-base px-8 py-6 h-auto"
+                >
+                  Expand all codes
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {expandedData && (
           <>
@@ -263,6 +286,7 @@ export default function ExploreMode() {
                 report={selectedReport}
                 isExpanding={isExpanding}
                 totalValueSets={selectedReport?.valueSets.length}
+                onCancel={handleCancel}
               />
             )}
           </>
