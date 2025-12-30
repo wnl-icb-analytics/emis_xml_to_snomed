@@ -170,19 +170,44 @@ async function expandSingleValueSet(
 
   // Build ECL query for non-refsets and refsets not found in RF2
   const valuesForEcl = [...allNonRefsetValues, ...refsetsToQueryViaEcl];
-  const eclExpression = valuesForEcl.length > 0
-    ? buildBatchedEclQuery(valuesForEcl, vsExcludedCodes)
-    : '';
 
-  // Expand via terminology server if needed
-  if (eclExpression) {
-    try {
-      const eclConcepts = await expandEclQuery(eclExpression);
-      console.log(`  -> Got ${eclConcepts.length} concepts from terminology server for ValueSet ${mapping.valueSetIndex + 1}`);
-      vsConcepts.push(...eclConcepts);
-    } catch (error) {
-      console.error(`Error expanding ValueSet ${mapping.valueSetIndex + 1} via ECL:`, error);
-      // Continue with concepts we already have from RF2
+  // Expand via terminology server if needed - use batching to avoid 414 Request-URI Too Large errors
+  // Each ECL code with << operator adds ~20-30 characters to the URL
+  // Most servers limit URLs to ~8KB, so batch at 50 codes to be safe
+  const BATCH_SIZE = 50;
+
+  if (valuesForEcl.length > 0) {
+    if (valuesForEcl.length > BATCH_SIZE) {
+      console.log(`  -> ValueSet has ${valuesForEcl.length} codes, batching into groups of ${BATCH_SIZE} to avoid URL length limits`);
+
+      for (let i = 0; i < valuesForEcl.length; i += BATCH_SIZE) {
+        const batch = valuesForEcl.slice(i, i + BATCH_SIZE);
+        const batchEclExpression = buildBatchedEclQuery(batch, vsExcludedCodes);
+
+        try {
+          const batchConcepts = await expandEclQuery(batchEclExpression);
+          console.log(`  -> Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(valuesForEcl.length / BATCH_SIZE)}: Got ${batchConcepts.length} concepts`);
+          vsConcepts.push(...batchConcepts);
+
+          // Small delay between batches to avoid rate limiting
+          if (i + BATCH_SIZE < valuesForEcl.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (error) {
+          console.error(`  -> Batch ${Math.floor(i / BATCH_SIZE) + 1} failed:`, error);
+          // Continue with other batches
+        }
+      }
+    } else {
+      const eclExpression = buildBatchedEclQuery(valuesForEcl, vsExcludedCodes);
+      try {
+        const eclConcepts = await expandEclQuery(eclExpression);
+        console.log(`  -> Got ${eclConcepts.length} concepts from terminology server for ValueSet ${mapping.valueSetIndex + 1}`);
+        vsConcepts.push(...eclConcepts);
+      } catch (error) {
+        console.error(`Error expanding ValueSet ${mapping.valueSetIndex + 1} via ECL:`, error);
+        // Continue with concepts we already have from RF2
+      }
     }
   }
 
