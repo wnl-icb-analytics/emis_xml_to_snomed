@@ -1,4 +1,5 @@
 import { getAccessToken } from './oauth-client';
+import { handleFhirResponse } from './fhir-error-handler';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
@@ -21,6 +22,8 @@ let cachedFallbackConceptMapVersion: string | null = null;
 /**
  * Resolves the latest active ConceptMap ID from a canonical URL
  * Returns the ID and version, or null if resolution fails
+ * Uses standardized FHIR error handling - only 404 is treated as "not found"
+ * Auth/rate-limit errors throw to alert about system issues
  */
 export async function resolveLatestConceptMap(
   canonicalUrl: string,
@@ -37,9 +40,14 @@ export async function resolveLatestConceptMap(
       signal: AbortSignal.timeout(5000),
     });
 
-    if (!response.ok) {
-      console.warn(`Failed to resolve ConceptMap from canonical URL ${canonicalUrl}: ${response.status}`);
-      return null;
+    // Use standardized error handling - 404 returns null, other errors throw
+    const errorResult = await handleFhirResponse(response, {
+      overrides: { 404: 'RETURN_NULL' },
+      context: `resolving ConceptMap from ${canonicalUrl}`
+    });
+
+    if (errorResult !== null) {
+      return null; // 404 - ConceptMap not found
     }
 
     const bundle = await response.json();
@@ -54,7 +62,8 @@ export async function resolveLatestConceptMap(
 
     return null;
   } catch (error) {
-    console.warn(`Error resolving ConceptMap from canonical URL ${canonicalUrl}:`, error);
+    // Log the error and return null to trigger fallback to hardcoded ID
+    console.warn(`Error resolving ConceptMap from canonical URL ${canonicalUrl}, will use fallback ID:`, error);
     return null;
   }
 }
