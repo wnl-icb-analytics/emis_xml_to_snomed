@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { EmisReport, ExpandedCodeSet, EmisXmlDocument } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight } from 'lucide-react';
+import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight, PlayCircle, FileX } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
@@ -379,25 +379,42 @@ export default function ExploreMode() {
 
         {/* Prominent expand card - only show before expansion starts */}
         {!expandedData && !isExpanding && (
-          <Card className="bg-primary/5 border-primary/20">
+          <Card className={selectedReport.valueSets.length === 0 ? "bg-muted/30 border-muted" : "bg-primary/5 border-primary/20"}>
             <CardContent className="pt-6">
               <div className="flex flex-col items-center text-center space-y-4">
-                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                  <FileText className="h-6 w-6 text-primary" />
+                <div className={`h-12 w-12 rounded-full flex items-center justify-center ${selectedReport.valueSets.length === 0 ? 'bg-muted' : 'bg-primary/10'}`}>
+                  {selectedReport.valueSets.length === 0 ? (
+                    <FileX className="h-6 w-6 text-muted-foreground" />
+                  ) : (
+                    <PlayCircle className="h-6 w-6 text-primary" />
+                  )}
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
-                  <p className="text-sm text-muted-foreground max-w-xl">
-                    This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
-                  </p>
+                  {selectedReport.valueSets.length === 0 ? (
+                    <>
+                      <h3 className="text-lg font-semibold mb-1">No ValueSets to expand</h3>
+                      <p className="text-sm text-muted-foreground max-w-xl">
+                        This report does not contain any ValueSets. There are no codes to expand.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
+                      <p className="text-sm text-muted-foreground max-w-xl">
+                        This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
+                      </p>
+                    </>
+                  )}
                 </div>
-                <Button
-                  onClick={handleExpandReport}
-                  size="lg"
-                  className="text-base px-8 py-6 h-auto"
-                >
-                  Expand all codes
-                </Button>
+                {selectedReport.valueSets.length > 0 && (
+                  <Button
+                    onClick={handleExpandReport}
+                    size="lg"
+                    className="text-base px-8 py-6 h-auto"
+                  >
+                    Expand all codes
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
