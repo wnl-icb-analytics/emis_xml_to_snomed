@@ -15,6 +15,7 @@ import {
 import { formatForSql } from '@/lib/sql-formatter';
 import { generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
 import { expandRefsetsFromRf2, refsetExistsInRf2, getRefsetDisplayName } from '@/lib/rf2-refset-parser';
+import { FhirApiError, isFhirApiError } from '@/lib/fhir-error-handler';
 
 // Internal type for values with additional metadata during expansion
 interface ValueWithMetadata extends EmisValue {
@@ -127,8 +128,17 @@ async function expandSingleValueSet(
 
         ukProductConcepts.push(...products);
       } catch (error) {
-        console.error(`Error expanding UK Products for substance ${substanceCode}:`, error);
-        // Continue with other substances
+        // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
+        // But if they do, allow them (code not found is acceptable)
+        if (isFhirApiError(error) && error.status === 404) {
+          console.warn(`  UK Products for substance ${substanceCode} returned 404 (not found), continuing...`);
+          // Continue with other substances - 404 means code not found, which is acceptable
+          continue;
+        }
+
+        // All other errors (network errors, 401, 403, 5xx, etc.) should throw
+        // This prevents silently marking codes as failed when there's a real error
+        throw error;
       }
     }
   }
@@ -212,8 +222,17 @@ async function expandSingleValueSet(
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         } catch (error) {
-          console.error(`  -> Batch ${Math.floor(i / BATCH_SIZE) + 1} failed:`, error);
-          // Continue with other batches
+          // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
+          // But if they do, allow them (code not found is acceptable)
+          if (isFhirApiError(error) && error.status === 404) {
+            console.warn(`  -> Batch ${Math.floor(i / BATCH_SIZE) + 1} returned 404 (code not found), continuing...`);
+            // Continue with other batches - 404 means code not found, which is acceptable
+            continue;
+          }
+
+          // All other errors (network errors, 401, 403, 5xx, etc.) should throw
+          // This prevents silently marking codes as failed when there's a real error
+          throw error;
         }
       }
     } else {
@@ -223,8 +242,15 @@ async function expandSingleValueSet(
         console.log(`  -> Got ${eclConcepts.length} concepts from terminology server for ValueSet ${mapping.valueSetIndex + 1}`);
         vsConcepts.push(...eclConcepts);
       } catch (error) {
-        console.error(`Error expanding ValueSet ${mapping.valueSetIndex + 1} via ECL:`, error);
-        // Continue with concepts we already have from RF2
+        // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
+        // But if they do, allow them (code not found is acceptable)
+        if (isFhirApiError(error) && error.status === 404) {
+          console.warn(`ValueSet ${mapping.valueSetIndex + 1} returned 404 (code not found), continuing with RF2 concepts...`);
+          // Continue with concepts we already have from RF2 - 404 means code not found, which is acceptable
+        } else {
+          // All other errors (network errors, 401, 403, 5xx, etc.) should throw
+          throw error;
+        }
       }
     }
   }
@@ -540,7 +566,16 @@ export async function POST(request: NextRequest) {
               await new Promise(resolve => setTimeout(resolve, 10));
             }
           } catch (error) {
-            console.error(`Error expanding batch:`, error);
+            // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
+            // But if they do, allow them (code not found is acceptable)
+            if (isFhirApiError(error) && error.status === 404) {
+              console.warn(`Batch ${Math.floor(i / BATCH_SIZE) + 1} returned 404 (code not found), continuing...`);
+              // Continue with other batches - 404 means code not found, which is acceptable
+              continue;
+            }
+
+            // All other errors (network errors, 401, 403, 5xx, etc.) should throw
+            throw error;
           }
         }
       } else if (valuesForEcl.length > 0) {
@@ -549,7 +584,15 @@ export async function POST(request: NextRequest) {
           const concepts = await expandEclQuery(eclExpression);
           expandedConcepts.push(...concepts);
         } catch (error) {
-          console.error(`Error expanding codes:`, error);
+          // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
+          // But if they do, allow them (code not found is acceptable)
+          if (isFhirApiError(error) && error.status === 404) {
+            console.warn(`Expansion returned 404 (code not found), continuing...`);
+            // Continue - 404 means code not found, which is acceptable
+          } else {
+            // All other errors (network errors, 401, 403, 5xx, etc.) should throw
+            throw error;
+          }
         }
       }
 

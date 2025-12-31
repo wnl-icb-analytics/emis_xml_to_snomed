@@ -69,9 +69,13 @@ export async function expandValueSet(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    // Preserve the error message from the API route
+    const errorMessage = data.error || `API request failed: ${response.status} ${response.statusText}`;
+    throw new Error(errorMessage);
   }
 
-  return await response.json();
+  return data;
 }

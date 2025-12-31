@@ -264,19 +264,14 @@ export async function resolveHistoricalConcept(
       signal: AbortSignal.timeout(10000),
     });
 
-    // Handle errors - for concept lookup, 404 and other errors return concept as-is
-    try {
-      await handleFhirResponse(response, {
-        overrides: { 404: 'RETURN_NULL' },  // Will catch below
-        context: `looking up historical concept ${conceptId}`
-      });
-    } catch (error) {
-      // For any error, return concept as non-historical (original ID)
-      return { currentConceptId: conceptId, isHistorical: false };
-    }
+    // Handle errors - 404 returns null (concept not found), other errors should throw
+    const errorResult = await handleFhirResponse(response, {
+      overrides: { 404: 'RETURN_NULL' },
+      context: `looking up historical concept ${conceptId}`
+    });
 
     // If handleFhirResponse returned null (404), treat as non-existent/non-historical
-    if (response.status === 404) {
+    if (errorResult !== null) {
       return { currentConceptId: conceptId, isHistorical: false };
     }
 

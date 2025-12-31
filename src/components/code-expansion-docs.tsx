@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { BookOpen } from 'lucide-react';
 
 // Import documentation components
 import { XmlParsingOverview } from '@/components/docs/xml-parsing-overview';
@@ -30,7 +31,10 @@ export function CodeExpansionDocs({ open, onOpenChange }: CodeExpansionDocsProps
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl w-full max-h-[95vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-bold">Documentation</DialogTitle>
+          <DialogTitle className="text-2xl font-bold flex items-center gap-2">
+            <BookOpen className="h-6 w-6" />
+            Documentation
+          </DialogTitle>
           <DialogDescription className="text-base">
             How the system parses XML files and expands codes into SNOMED CT concepts
           </DialogDescription>

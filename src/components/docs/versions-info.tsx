@@ -42,13 +42,24 @@ export function VersionsInfo() {
   useEffect(() => {
     // Fetch current versions from the API
     fetch('/api/terminology/versions')
-      .then((res) => res.json())
-      .then((data: VersionsResponse) => {
-        setConceptMapVersions(data.conceptMaps);
-        setRf2Version(data.rf2);
-        setRf2Update(data.rf2Update);
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to fetch versions: ${res.status} ${res.statusText}`);
+        }
+        return res.json();
       })
-      .catch((err) => console.error('Failed to fetch versions:', err));
+      .then((data: VersionsResponse) => {
+        // Ensure conceptMaps exists before setting state
+        if (data.conceptMaps) {
+          setConceptMapVersions(data.conceptMaps);
+        }
+        setRf2Version(data.rf2 || null);
+        setRf2Update(data.rf2Update || null);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch versions:', err);
+        // Keep default state (primary: null, fallback: null) on error
+      });
   }, []);
 
   return (

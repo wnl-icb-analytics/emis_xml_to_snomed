@@ -334,8 +334,39 @@ export default function BatchExtractor() {
               }
             }
           } catch (error) {
-            console.error(`Error expanding ValueSet ${vsIndex} in report ${report.name}:`, error);
-            // Continue processing other ValueSets even if one fails
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            
+            // Import FhirApiError check (we'll need to add the import)
+            const isFhirApiError = error instanceof Error && 
+              (error as any).name === 'FhirApiError';
+            const is404Error = isFhirApiError && (error as any).status === 404;
+            
+            // Check if this is a network error or other serious error (not 404)
+            const isNetworkError = error instanceof Error && (
+              errorMessage.includes('Network error') ||
+              errorMessage.includes('timeout') ||
+              errorMessage.includes('Unable to connect') ||
+              errorMessage.includes('did not respond') ||
+              errorMessage.includes('internet connection')
+            );
+            
+            const isSeriousError = isNetworkError || (isFhirApiError && !is404Error);
+
+            if (isSeriousError) {
+              console.error(`Error expanding ValueSet ${vsIndex} in report ${report.name}:`, error);
+              // For network errors and other serious API errors (401, 403, 5xx, etc.), stop the extraction
+              // This prevents creating ValueSets with failed codes when there's a real error
+              // 404 errors are acceptable (code not found) and should continue
+              throw new Error(`Error while expanding ValueSet ${vsIndex + 1} in report "${report.name}": ${errorMessage}. Please check your connection and try again.`);
+            } else if (is404Error) {
+              // 404 errors are acceptable - code not found, continue with other ValueSets
+              console.warn(`ValueSet ${vsIndex} in report ${report.name} returned 404 (code not found), continuing...`);
+              // Continue processing other ValueSets
+            } else {
+              console.error(`Error expanding ValueSet ${vsIndex} in report ${report.name}:`, error);
+              // For unexpected errors, also stop to be safe
+              throw error;
+            }
           }
 
           // Track time for this valueset
