@@ -117,11 +117,22 @@ export function ExtractionDataViewer({ open, onOpenChange, data }: ExtractionDat
               ) : (
                 displayRows.map((row, idx) => (
                   <TableRow key={idx}>
-                    {columns.map((col) => (
-                      <TableCell key={col.key} className="whitespace-nowrap">
-                        {row[col.key] ?? '-'}
-                      </TableCell>
-                    ))}
+                    {columns.map((col) => {
+                      let cellValue = row[col.key] ?? '-';
+                      // Truncate ecl_expression to 20 characters
+                      if (col.key === 'ecl_expression' && typeof cellValue === 'string' && cellValue.length > 20) {
+                        cellValue = `${cellValue.substring(0, 20)}...`;
+                      }
+                      return (
+                        <TableCell 
+                          key={col.key} 
+                          className="whitespace-nowrap"
+                          title={col.key === 'ecl_expression' && row[col.key] ? row[col.key] : undefined}
+                        >
+                          {cellValue}
+                        </TableCell>
+                      );
+                    })}
                   </TableRow>
                 ))
               )}

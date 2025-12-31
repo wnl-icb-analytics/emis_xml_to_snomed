@@ -23,6 +23,7 @@ export const normalizedTableColumns = {
     { key: 'valueset_hash', label: 'valueset_hash' },
     { key: 'valueset_friendly_name', label: 'valueset_friendly_name' },
     { key: 'code_system', label: 'code_system' },
+    { key: 'ecl_expression', label: 'ecl_expression' },
     { key: 'expansion_error', label: 'expansion_error' },
     { key: 'expanded_at', label: 'expanded_at' },
   ],

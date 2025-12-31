@@ -59,6 +59,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
       valueset_hash: group.valueSetHash,
       valueset_friendly_name: group.valueSetFriendlyName,
       code_system: group.originalCodes?.[0]?.codeSystem || '',
+      ecl_expression: group.eclExpression || '',
       expansion_error: group.expansionError || '',
       expanded_at: expandedCodes.expandedAt,
     })) || [];
@@ -199,6 +200,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">valueset_hash</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">valueset_friendly_name</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">code_system</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap max-w-[120px]">ecl_expression</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">expansion_error</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">expanded_at</TableHead>
               </TableRow>
@@ -217,6 +219,13 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                         {group.originalCodes[0].codeSystem}
                       </Badge>
                     )}
+                  </TableCell>
+                  <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap max-w-[120px]">
+                    <code className="text-xs truncate block" title={group.eclExpression || ''}>
+                      {group.eclExpression && group.eclExpression.length > 20 
+                        ? `${group.eclExpression.substring(0, 20)}...` 
+                        : (group.eclExpression || '')}
+                    </code>
                   </TableCell>
                   <TableCell className="h-6 px-2 py-0.5 text-xs text-muted-foreground whitespace-nowrap">
                     {group.expansionError || ''}

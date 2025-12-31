@@ -8,6 +8,16 @@ import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight } from 'lucide-re
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function ExploreMode() {
   const [selectedReport, setSelectedReport] = useState<EmisReport | null>(null);
@@ -17,6 +27,8 @@ export default function ExploreMode() {
   const [isCheckingXml, setIsCheckingXml] = useState(true);
   const [allReports, setAllReports] = useState<EmisReport[]>([]);
   const cancellationRef = useRef(false);
+  const [pendingReport, setPendingReport] = useState<EmisReport | null>(null);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   // Check if XML is already loaded in IndexedDB on mount
   useEffect(() => {
@@ -29,12 +41,30 @@ export default function ExploreMode() {
     });
   }, []);
 
+  const isExpandingRef = useRef(false);
+  const selectedReportRef = useRef<EmisReport | null>(null);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isExpandingRef.current = isExpanding;
+    selectedReportRef.current = selectedReport;
+  }, [isExpanding, selectedReport]);
+
   useEffect(() => {
     const handleReportSelected = (event: Event) => {
       const customEvent = event as CustomEvent<EmisReport>;
-      console.log('Report selected event received:', customEvent.detail);
-      setSelectedReport(customEvent.detail);
-      setExpandedData(null);
+      const newReport = customEvent.detail;
+      console.log('Report selected event received:', newReport);
+      
+      // If expansion is in progress, show dialog to confirm cancellation
+      if (isExpandingRef.current && selectedReportRef.current && selectedReportRef.current.id !== newReport.id) {
+        setPendingReport(newReport);
+        setShowCancelDialog(true);
+      } else {
+        // No expansion in progress, switch immediately
+        setSelectedReport(newReport);
+        setExpandedData(null);
+      }
     };
 
     const handleXmlParsed = (event: Event) => {
@@ -66,14 +96,18 @@ export default function ExploreMode() {
   const handleExpandReport = async () => {
     if (!selectedReport) return;
 
+    // Capture the report at the start to ensure we expand the correct one
+    const reportToExpand = selectedReport;
+    const reportId = reportToExpand.id;
+
     setIsExpanding(true);
     cancellationRef.current = false;
 
     try {
       // Initialize expandedData with empty valueSetGroups
       const initialData: ExpandedCodeSet = {
-        featureId: selectedReport.id,
-        featureName: selectedReport.name,
+        featureId: reportToExpand.id,
+        featureName: reportToExpand.name,
         concepts: [],
         totalCount: 0,
         sqlFormattedCodes: '',
@@ -85,20 +119,20 @@ export default function ExploreMode() {
       // Process each valueSet sequentially with separate API calls
       const allConcepts = new Map<string, any>();
 
-      for (let vsIndex = 0; vsIndex < selectedReport.valueSets.length; vsIndex++) {
-        // Check if expansion was cancelled
-        if (cancellationRef.current) {
+      for (let vsIndex = 0; vsIndex < reportToExpand.valueSets.length; vsIndex++) {
+        // Check if expansion was cancelled or if report has changed
+        if (cancellationRef.current || selectedReport?.id !== reportId) {
           setIsExpanding(false);
           setExpandedData(null);
           return;
         }
 
-        const vs = selectedReport.valueSets[vsIndex];
+        const vs = reportToExpand.valueSets[vsIndex];
 
         // Use shared utility to expand the ValueSet
         const result = await expandValueSet(
-          selectedReport.id,
-          selectedReport.name,
+          reportToExpand.id,
+          reportToExpand.name,
           vs,
           vsIndex
         );
@@ -139,17 +173,23 @@ export default function ExploreMode() {
     } catch (err) {
       console.error('Expansion error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
-      setExpandedData({
-        featureId: selectedReport.id,
-        featureName: selectedReport.name,
-        concepts: [],
-        totalCount: 0,
-        sqlFormattedCodes: '',
-        expandedAt: new Date().toISOString(),
-        error: errorMessage,
-      });
+      // Only set error if we're still expanding the same report
+      if (selectedReport?.id === reportId) {
+        setExpandedData({
+          featureId: reportToExpand.id,
+          featureName: reportToExpand.name,
+          concepts: [],
+          totalCount: 0,
+          sqlFormattedCodes: '',
+          expandedAt: new Date().toISOString(),
+          error: errorMessage,
+        });
+      }
     } finally {
-      setIsExpanding(false);
+      // Only clear expansion state if we're still on the same report
+      if (selectedReport?.id === reportId) {
+        setIsExpanding(false);
+      }
       cancellationRef.current = false;
     }
   };
@@ -158,6 +198,29 @@ export default function ExploreMode() {
     cancellationRef.current = true;
     setIsExpanding(false);
     setExpandedData(null);
+  };
+
+  const handleConfirmSwitchReport = () => {
+    // Cancel current expansion
+    cancellationRef.current = true;
+    setIsExpanding(false);
+    setExpandedData(null);
+    
+    // Switch to new report
+    if (pendingReport) {
+      setSelectedReport(pendingReport);
+      setExpandedData(null);
+    }
+    
+    // Close dialog and clear pending
+    setShowCancelDialog(false);
+    setPendingReport(null);
+  };
+
+  const handleCancelSwitchReport = () => {
+    // Keep current report, just close dialog
+    setShowCancelDialog(false);
+    setPendingReport(null);
   };
 
   // Empty state when no XML loaded (only show after checking)
@@ -223,7 +286,28 @@ export default function ExploreMode() {
 
   // Report selected view
   return (
-    <div className="p-6 space-y-6 w-full max-w-full min-w-0">
+    <>
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Expansion in progress</AlertDialogTitle>
+            <AlertDialogDescription>
+              An expansion is currently running for "{selectedReport?.name}". 
+              Do you want to cancel it and switch to "{pendingReport?.name}"?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelSwitchReport}>
+              Continue expansion
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmSwitchReport}>
+              Cancel expansion and switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <div className="p-6 space-y-6 w-full max-w-full min-w-0">
         {/* Breadcrumbs */}
         {breadcrumbs.length > 0 && (
           <nav className="flex flex-wrap text-sm text-muted-foreground">
@@ -340,5 +424,6 @@ export default function ExploreMode() {
           </>
         )}
       </div>
+    </>
   );
 }

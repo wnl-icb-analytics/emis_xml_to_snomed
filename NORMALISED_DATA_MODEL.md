@@ -37,6 +37,7 @@ Stores valueset metadata, linked to reports.
 | valueset_friendly_name | VARCHAR | Human-readable valueset name | |
 | valueset_short_name | VARCHAR | Short acronym name | |
 | code_system | VARCHAR | Code system from XML (e.g., "SNOMED_CONCEPT", "EMIS") | |
+| ecl_expression | VARCHAR | Formatted ECL expression representing the entire valueset (no URL encoding, no descriptions) | NULLABLE |
 | expansion_error | VARCHAR | Error message if expansion failed | NULLABLE |
 | expanded_at | TIMESTAMP_NTZ | When the valueset was expanded | |
 

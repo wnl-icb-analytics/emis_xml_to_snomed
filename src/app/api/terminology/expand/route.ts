@@ -6,7 +6,7 @@ import {
   ValueSetGroup,
   EmisValue,
 } from '@/lib/types';
-import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, separateRefsets } from '@/lib/ecl-builder';
+import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
 import {
   expandEclQuery,
   translateEmisCodesToSnomed,
@@ -48,7 +48,25 @@ async function expandSingleValueSet(
   allConceptsMap: Map<string, any>
 ): Promise<ValueSetGroup> {
   const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
-  const vsExcludedCodes = mapping.excludedCodes || [];
+  const vsOriginalExcludedCodes = mapping.excludedCodes || [];
+  
+  // Debug: log excluded codes
+  if (vsOriginalExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1} has ${vsOriginalExcludedCodes.length} excluded codes:`, vsOriginalExcludedCodes.slice(0, 5));
+  }
+  
+  // Translate and resolve excluded codes (same process as parent codes)
+  const vsExcludedCodes = vsOriginalExcludedCodes.map((code: string) => {
+    const translatedCode = codeToSnomedMap.get(code);
+    const snomedCode = translatedCode?.code || code;
+    return historicalMap.get(snomedCode) || snomedCode;
+  });
+  
+  // Debug: log translated/resolved excluded codes
+  if (vsExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1} has ${vsExcludedCodes.length} translated/resolved excluded codes:`, vsExcludedCodes.slice(0, 5));
+  }
+  
   const vsExcludedSet = new Set(vsExcludedCodes);
 
   // Build values array for this specific ValueSet
@@ -318,6 +336,27 @@ async function expandSingleValueSet(
   // Generate deterministic ID based on report ID, valueset index, and valueset hash
   const valueSetId = generateValueSetId(featureId, valueSetHash, mapping.valueSetIndex);
 
+  // Build formatted ECL expression for display (includes all codes for this ValueSet)
+  // Convert vsValues to EmisValue format for ECL builder
+  const eclValues = vsValues.map((v: ValueWithMetadata) => ({
+    code: v.code,
+    displayName: v.displayName,
+    includeChildren: v.includeChildren,
+    isRefset: v.isRefset,
+  }));
+  
+  // Debug: log before building ECL
+  if (vsExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] Building ECL for ValueSet ${mapping.valueSetIndex + 1} with ${vsExcludedCodes.length} excluded codes:`, vsExcludedCodes.slice(0, 5));
+  }
+  
+  const eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap);
+  
+  // Debug: log the generated ECL
+  if (vsExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] Generated ECL expression for ValueSet ${mapping.valueSetIndex + 1}:`, eclExpression.substring(0, 200));
+  }
+
   return {
     valueSetId,
     valueSetIndex: mapping.valueSetIndex,
@@ -327,6 +366,7 @@ async function expandSingleValueSet(
     concepts: filteredConcepts,
     sqlFormattedCodes: vsSqlFormatted,
     parentCodes: vsSnomedParentCodes,
+    eclExpression: eclExpression || undefined,
     expansionError,
     failedCodes: failedCodes.length > 0 ? failedCodes : undefined,
     refsets: refsetsMetadata.length > 0 ? refsetsMetadata : undefined,

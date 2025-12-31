@@ -14,7 +14,8 @@ export function separateRefsets(values: EmisValue[]): {
 
 export function buildBatchedEclQuery(
   values: EmisValue[],
-  excludedCodes: string[]
+  excludedCodes: string[],
+  allConceptsMap?: Map<string, any> // Optional map of all expanded concepts to check for descendants
 ): string {
   // Filter out invalid codes (non-numeric codes like 'M', 'F', etc.)
   // SNOMED CT codes should be numeric strings, 6-18 digits long
@@ -42,7 +43,16 @@ export function buildBatchedEclQuery(
       console.warn('Removing duplicate code:', v.code);
     }
   });
-  const deduplicatedValues = Array.from(uniqueValues.values());
+  let deduplicatedValues = Array.from(uniqueValues.values());
+
+  // Remove redundant descendant codes: if code A has includeChildren=true and code B is a descendant of A,
+  // we only need code A in the ECL (since << A already includes B)
+  // This optimization reduces ECL expression length
+  // Note: This requires checking the SNOMED hierarchy, which is complex.
+  // For now, we keep all codes. A future optimization could:
+  // 1. Use the terminology server to check if one code is a descendant of another
+  // 2. Use RF2 files to check the hierarchy
+  // 3. Track which codes were expanded from which parents and remove redundant descendants
 
   // Group by type: refsets, codes with children, codes without children
   const refsets = deduplicatedValues.filter((v) => v.isRefset);
@@ -120,4 +130,17 @@ export function buildUkProductEcl(substanceCode: string): string {
   const HAS_PRECISE_ACTIVE_INGREDIENT = '762949000';
   
   return `<< (< ${UK_PRODUCT_CONCEPT} |UK Product| : ${HAS_PRECISE_ACTIVE_INGREDIENT} |Has precise active ingredient| = << ${substanceCode})`;
+}
+
+/**
+ * Builds a formatted ECL expression for display purposes
+ * This is the same as buildBatchedEclQuery but with a clearer name for display use
+ * Returns a properly formatted ECL expression (not URL encoded, no descriptions)
+ */
+export function buildFormattedEclExpression(
+  values: EmisValue[],
+  excludedCodes: string[],
+  allConceptsMap?: Map<string, any>
+): string {
+  return buildBatchedEclQuery(values, excludedCodes, allConceptsMap);
 }

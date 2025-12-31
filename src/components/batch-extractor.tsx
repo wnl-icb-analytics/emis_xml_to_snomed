@@ -274,6 +274,7 @@ export default function BatchExtractor() {
                   valueset_hash: group.valueSetHash,
                   valueset_friendly_name: group.valueSetFriendlyName,
                   code_system: group.originalCodes?.[0]?.codeSystem || '',
+                  ecl_expression: group.eclExpression || '',
                   expansion_error: group.expansionError || '',
                   expanded_at: result.data.expandedAt,
                 });

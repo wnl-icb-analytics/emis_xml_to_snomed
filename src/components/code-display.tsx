@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Copy, Check, Download, ChevronDown, ChevronRight, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Copy, Check, Download, ChevronDown, ChevronRight, CheckCircle2, XCircle, Loader2, ChevronUp } from 'lucide-react';
 import { ExpandedCodeSet, EmisReport } from '@/lib/types';
 import NormalisedDataView from './normalised-data-view';
 
@@ -56,6 +56,11 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
   const [copiedButton, setCopiedButton] = useState<number | 'all' | null>(null);
   const [expandedValueSets, setExpandedValueSets] = useState<Set<number>>(new Set());
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
+  const [expandedSqlBlocks, setExpandedSqlBlocks] = useState<Set<number>>(new Set());
+  const [expandedEclBlocks, setExpandedEclBlocks] = useState<Set<number>>(new Set());
+  
+  const SQL_TRUNCATE_LENGTH = 500; // Characters to show before truncation
+  const ECL_TRUNCATE_LENGTH = 500; // Characters to show before truncation
 
   const handleCopy = async (codesText: string, buttonId: number | 'all') => {
     await navigator.clipboard.writeText(codesText);
@@ -77,6 +82,26 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
       newExpanded.add(index);
     }
     setExpandedValueSets(newExpanded);
+  };
+
+  const toggleSqlBlock = (index: number) => {
+    const newExpanded = new Set(expandedSqlBlocks);
+    if (newExpanded.has(index)) {
+      newExpanded.delete(index);
+    } else {
+      newExpanded.add(index);
+    }
+    setExpandedSqlBlocks(newExpanded);
+  };
+
+  const toggleEclBlock = (index: number) => {
+    const newExpanded = new Set(expandedEclBlocks);
+    if (newExpanded.has(index)) {
+      newExpanded.delete(index);
+    } else {
+      newExpanded.add(index);
+    }
+    setExpandedEclBlocks(newExpanded);
   };
 
   const handleDownloadCsv = (group: any, type: 'xml' | 'output' | 'summary') => {
@@ -392,21 +417,33 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {group.originalCodes.map((oc, i) => (
-                                      <TableRow key={i}>
-                                        <TableCell className="font-mono text-xs whitespace-nowrap">{oc.originalCode}</TableCell>
-                                        <TableCell className="text-sm">{oc.displayName}</TableCell>
-                                        <TableCell className="whitespace-nowrap">
-                                          <Badge variant="outline" className={getCodeSystemBadgeClass(oc.codeSystem)}>
-                                            {oc.codeSystem}
-                                          </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-center whitespace-nowrap">
-                                          {oc.isRefset ? '✓' : ''}
-                                        </TableCell>
-                                        <TableCell className="text-center whitespace-nowrap">
-                                          {oc.includeChildren && <Badge className="text-xs">Yes</Badge>}
-                                        </TableCell>
+                                    {group.originalCodes.map((oc, i) => {
+                                      // Check if this ValueSet has exceptions (which means some children are excluded)
+                                      // If the ECL expression contains MINUS, there are exceptions
+                                      const hasExceptions = group.eclExpression?.includes('MINUS') ?? false;
+                                      
+                                      return (
+                                        <TableRow key={i}>
+                                          <TableCell className="font-mono text-xs whitespace-nowrap">{oc.originalCode}</TableCell>
+                                          <TableCell className="text-sm">{oc.displayName}</TableCell>
+                                          <TableCell className="whitespace-nowrap">
+                                            <Badge variant="outline" className={getCodeSystemBadgeClass(oc.codeSystem)}>
+                                              {oc.codeSystem}
+                                            </Badge>
+                                          </TableCell>
+                                          <TableCell className="text-center whitespace-nowrap">
+                                            {oc.isRefset ? '✓' : ''}
+                                          </TableCell>
+                                          <TableCell className="text-center whitespace-nowrap">
+                                            {oc.includeChildren && (
+                                              <Badge className="text-xs">
+                                                {hasExceptions ? 'Some' : 'Yes'}
+                                              </Badge>
+                                            )}
+                                            {!oc.includeChildren && (
+                                              <Badge variant="outline" className="text-xs">No</Badge>
+                                            )}
+                                          </TableCell>
                                         <TableCell className="font-mono text-xs whitespace-nowrap">
                                           {oc.translatedTo && (
                                             <span className="text-green-600">{oc.translatedTo}</span>
@@ -416,7 +453,8 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                           {oc.translatedToDisplay || ''}
                                         </TableCell>
                                       </TableRow>
-                                    ))}
+                                      );
+                                    })}
                                   </TableBody>
                                 </Table>
                               </div>
@@ -504,31 +542,120 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                             </div>
                           </div>
 
+                          {/* ECL Expression */}
+                          {group.eclExpression && (
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-sm font-semibold">ECL Expression</h4>
+                                <div className="flex items-center gap-2">
+                                  {group.eclExpression.length > ECL_TRUNCATE_LENGTH && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => toggleEclBlock(idx)}
+                                      className="h-8"
+                                    >
+                                      {expandedEclBlocks.has(idx) ? (
+                                        <>
+                                          <ChevronUp className="w-4 h-4 mr-1" />
+                                          Collapse
+                                        </>
+                                      ) : (
+                                        <>
+                                          <ChevronDown className="w-4 h-4 mr-1" />
+                                          Expand
+                                        </>
+                                      )}
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleCopyItem(group.eclExpression!, `ecl-expanded-${idx}`)}
+                                  >
+                                    {copiedItem === `ecl-expanded-${idx}` ? (
+                                      <>
+                                        <Check className="w-4 h-4 mr-2" />
+                                        Copied!
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-4 h-4 mr-2" />
+                                        Copy ECL
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="border rounded-md bg-muted/50 p-3">
+                                <code className="text-xs font-mono text-muted-foreground break-all whitespace-pre-wrap">
+                                  {group.eclExpression.length > ECL_TRUNCATE_LENGTH && !expandedEclBlocks.has(idx) ? (
+                                    <>
+                                      {group.eclExpression.substring(0, ECL_TRUNCATE_LENGTH)}
+                                      <span className="text-muted-foreground/70">... (truncated, {group.eclExpression.length - ECL_TRUNCATE_LENGTH} more characters)</span>
+                                    </>
+                                  ) : (
+                                    group.eclExpression
+                                  )}
+                                </code>
+                              </div>
+                            </div>
+                          )}
+
                           {/* SQL Format Preview */}
                           <div>
                             <div className="flex items-center justify-between mb-2">
                               <h4 className="text-sm font-semibold">SQL IN Clause Format</h4>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleCopy(group.sqlFormattedCodes, idx)}
-                              >
-                                {copiedButton === idx ? (
-                                  <>
-                                    <Check className="w-4 h-4 mr-2" />
-                                    Copied!
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-4 h-4 mr-2" />
-                                    Copy for SQL
-                                  </>
+                              <div className="flex items-center gap-2">
+                                {group.sqlFormattedCodes.length > SQL_TRUNCATE_LENGTH && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => toggleSqlBlock(idx)}
+                                    className="h-8"
+                                  >
+                                    {expandedSqlBlocks.has(idx) ? (
+                                      <>
+                                        <ChevronUp className="w-4 h-4 mr-1" />
+                                        Collapse
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ChevronDown className="w-4 h-4 mr-1" />
+                                        Expand
+                                      </>
+                                    )}
+                                  </Button>
                                 )}
-                              </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleCopy(group.sqlFormattedCodes, idx)}
+                                >
+                                  {copiedButton === idx ? (
+                                    <>
+                                      <Check className="w-4 h-4 mr-2" />
+                                      Copied!
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-4 h-4 mr-2" />
+                                      Copy for SQL
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
                             </div>
                             <div className="border rounded-md bg-muted/50 p-3">
                               <code className="text-xs font-mono text-muted-foreground break-all">
-                                {group.sqlFormattedCodes}
+                                {group.sqlFormattedCodes.length > SQL_TRUNCATE_LENGTH && !expandedSqlBlocks.has(idx) ? (
+                                  <>
+                                    {group.sqlFormattedCodes.substring(0, SQL_TRUNCATE_LENGTH)}
+                                    <span className="text-muted-foreground/70">... (truncated, {group.sqlFormattedCodes.length - SQL_TRUNCATE_LENGTH} more characters)</span>
+                                  </>
+                                ) : (
+                                  group.sqlFormattedCodes
+                                )}
                               </code>
                             </div>
                           </div>

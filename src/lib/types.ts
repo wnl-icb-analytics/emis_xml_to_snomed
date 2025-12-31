@@ -125,6 +125,7 @@ export interface ValueSetGroup {
   concepts: SnomedConcept[];
   sqlFormattedCodes: string;
   parentCodes: string[];
+  eclExpression?: string; // Formatted ECL expression representing the entire valueset (no URL encoding, no descriptions)
   expansionError?: string; // Error message if expansion failed (e.g., refsets not available)
   failedCodes?: Array<{
     originalCode: string;

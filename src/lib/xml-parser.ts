@@ -369,9 +369,99 @@ function parseValueSet(valueSet: any, index: number): EmisValueSet {
   const valuesData = valueSet.values || [];
   const valuesArray = Array.isArray(valuesData) ? valuesData : valuesData ? [valuesData] : [];
 
-  // Handle exceptions if present
-  const exceptionsData = valueSet.exception?.values || [];
-  const exceptionsArray = Array.isArray(exceptionsData) ? exceptionsData : exceptionsData ? [exceptionsData] : [];
+  // Collect all exceptions from:
+  // 1. ValueSet-level exceptions (valueSet.exception.values)
+  // 2. Exceptions nested within individual values (value.exception.values)
+  const allExceptions: any[] = [];
+  
+  // Handle ValueSet-level exceptions
+  if (valueSet.exception) {
+    if (valueSet.exception.values) {
+      const vsExceptions = Array.isArray(valueSet.exception.values) 
+        ? valueSet.exception.values 
+        : [valueSet.exception.values];
+      allExceptions.push(...vsExceptions);
+    } else if (Array.isArray(valueSet.exception)) {
+      allExceptions.push(...valueSet.exception);
+    } else if (valueSet.exception.value) {
+      allExceptions.push(valueSet.exception);
+    } else {
+      allExceptions.push(valueSet.exception);
+    }
+  } else if (valueSet.exceptions) {
+    const vsExceptions = Array.isArray(valueSet.exceptions) 
+      ? valueSet.exceptions 
+      : [valueSet.exceptions];
+    allExceptions.push(...vsExceptions);
+  }
+  
+  // Extract exceptions nested within individual values
+  // These are exceptions to specific parent codes (e.g., exclude certain children from a parent with includeChildren=true)
+  valuesArray.forEach((value: any, valueIdx: number) => {
+    if (value.exception) {
+      // Exception can contain a values array with codes to exclude
+      // Each exception value has the same structure as a regular value: { value: 'code', displayName: '...', includeChildren: 'true' }
+      if (value.exception.values) {
+        const nestedExceptions = Array.isArray(value.exception.values)
+          ? value.exception.values
+          : [value.exception.values];
+        
+        nestedExceptions.forEach((exc: any) => {
+          // Use the same extraction logic as parseValue to handle different XML parser outputs
+          let excCode = '';
+          
+          if (typeof exc.value === 'string' || typeof exc.value === 'number') {
+            excCode = exc.value.toString().trim();
+          } else if (exc.value && typeof exc.value === 'object' && exc.value['#text']) {
+            excCode = exc.value['#text'].toString().trim();
+          } else if (exc.code) {
+            excCode = exc.code.toString().trim();
+          }
+          
+          if (excCode) {
+            allExceptions.push({ value: excCode });
+          }
+        });
+      }
+      // Or exception might be a direct value
+      else if (value.exception.value) {
+        let excCode = '';
+        if (typeof value.exception.value === 'string' || typeof value.exception.value === 'number') {
+          excCode = value.exception.value.toString().trim();
+        } else if (value.exception.value && typeof value.exception.value === 'object' && value.exception.value['#text']) {
+          excCode = value.exception.value['#text'].toString().trim();
+        }
+        
+        if (excCode) {
+          allExceptions.push({ value: excCode });
+        }
+      }
+    }
+  });
+  
+  // Deduplicate exceptions by code
+  const uniqueExceptions = new Map<string, any>();
+  allExceptions.forEach((exc: any) => {
+    const code = exc.value || exc.code || '';
+    if (code && !uniqueExceptions.has(code)) {
+      uniqueExceptions.set(code, exc);
+    }
+  });
+  
+  const exceptionsArray = Array.from(uniqueExceptions.values());
+  
+  // Debug: log if we find exceptions
+  if (exceptionsArray.length > 0) {
+    const exceptionCodes = exceptionsArray.map((e: any) => e.value || e.code || '').filter(Boolean);
+    console.log(`[parseValueSet] ValueSet ${index} found ${exceptionsArray.length} exceptions (${uniqueExceptions.size} unique codes):`, exceptionCodes.slice(0, 10));
+  } else {
+    // Debug: log when no exceptions found (to help diagnose)
+    const hasValueSetLevelException = !!(valueSet.exception || valueSet.exceptions);
+    const hasNestedExceptions = valuesArray.some((v: any) => v.exception);
+    if (hasValueSetLevelException || hasNestedExceptions) {
+      console.log(`[parseValueSet] ValueSet ${index} has exception structure but extracted 0 exceptions. ValueSet-level: ${hasValueSetLevelException}, Nested: ${hasNestedExceptions}`);
+    }
+  }
 
   // Extract codeSystem directly from XML - this is preserved as-is from the source XML
   // No conversion is performed - if the XML says "SNOMED_CONCEPT", "EMIS", or any other value, it's kept exactly as-is
