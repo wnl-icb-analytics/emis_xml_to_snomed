@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { EmisReport, ExpandedCodeSet, EmisXmlDocument } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, AlertCircle, XCircle } from 'lucide-react';
+import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
@@ -267,9 +267,10 @@ export default function ExploreMode() {
                         onClick={() => {
                           window.dispatchEvent(new CustomEvent('report-selected', { detail: parentReport }));
                         }}
-                        className="text-primary hover:underline font-medium cursor-pointer"
+                        className="inline-flex items-center text-primary hover:underline font-medium cursor-pointer"
                       >
                         "{parentReport.searchName}"
+                        <ArrowUpRight className="h-3.5 w-3.5" />
                       </button>
                       {' '}search results
                     </>
