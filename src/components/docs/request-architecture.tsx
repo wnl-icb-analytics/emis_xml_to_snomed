@@ -11,8 +11,9 @@ export function RequestArchitecture() {
           Request Architecture
         </h3>
         <p className="text-sm text-muted-foreground mb-3">
-          Each value set is expanded via a separate API request. This architecture is crucial for handling
-          large XML files with many reports and value sets without hitting server-side timeouts.
+          Each value set is expanded via a separate API request. This architecture allows the application to handle
+          large XML files with many reports and value sets by breaking the work into small, independent requests that
+          complete quickly and avoid server-side timeouts.
         </p>
 
         <div className="space-y-3 ml-4">
@@ -133,37 +134,59 @@ export function RequestArchitecture() {
       {/* Summary Flow */}
       <section>
         <h3 className="text-lg font-semibold mb-3">Summary Flow</h3>
-        <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="shrink-0">EMIS Code</Badge>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground text-xs">ConceptMap</span>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground text-xs">Historical</span>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <Badge variant="outline" className="shrink-0">Resolved Code</Badge>
+        <div className="bg-muted/50 rounded-lg p-4 space-y-3 text-sm">
+          {/* Translation & Resolution */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="shrink-0 text-xs">1. Translation & Resolution</Badge>
+            </div>
+            <div className="ml-4 text-xs text-muted-foreground">
+              <strong>EMIS Code</strong> → ConceptMap translation → Historical resolution → <strong>Current SNOMED Code</strong>
+            </div>
           </div>
-          <div className="flex items-center gap-2 ml-8">
-            <ArrowRight className="h-4 w-4 text-muted-foreground rotate-90" />
+
+          {/* Expansion */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="shrink-0 text-xs">2. Expansion</Badge>
+            </div>
+            <div className="ml-4 space-y-2 text-xs">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">Refsets</span>
+                  <span className="text-muted-foreground"> (isRefset=true in XML or detected in RF2):</span>
+                  <br />
+                  <span className="text-muted-foreground ml-4">→ RF2 file expansion (primary) → ECL query (fallback)</span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-medium">Regular codes</span>
+                  <span className="text-muted-foreground"> (not refsets):</span>
+                  <br />
+                  <span className="text-muted-foreground ml-4">→ ECL query expansion</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2 ml-8">
-            <span className="text-xs text-muted-foreground">Refset Detection (XML + RF2)</span>
-          </div>
-          <div className="flex items-center gap-2 ml-8">
-            <ArrowRight className="h-4 w-4 text-muted-foreground rotate-90" />
-          </div>
-          <div className="flex items-center gap-2 ml-8">
-            <Badge variant="secondary" className="shrink-0 text-xs">Is Refset?</Badge>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground text-xs">RF2 File OR ECL</span>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            <Badge variant="outline" className="shrink-0">Expanded Concepts</Badge>
-          </div>
-          <div className="flex items-center gap-2 ml-8 mt-2 pt-2 border-t border-border">
-            <XCircle className="h-4 w-4 text-destructive" />
-            <span className="text-xs text-muted-foreground">
-              Codes not in final expansion → <strong>Failed Codes</strong>
-            </span>
+
+          {/* Result */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="shrink-0 text-xs">3. Result</Badge>
+            </div>
+            <div className="ml-4 space-y-2 text-xs">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                <span><strong>Expanded Concepts</strong> - All SNOMED concepts from expansion</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                <span><strong>Failed Codes</strong> - Codes not found in final expansion</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
