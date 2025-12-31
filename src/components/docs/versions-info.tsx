@@ -129,8 +129,9 @@ export function VersionsInfo() {
           SNOMED CT UK Primary Care RF2 Files
         </h3>
         <p className="text-sm text-muted-foreground mb-4">
-          The system includes bundled SNOMED CT RF2 (Release Format 2) files for offline refset lookups and
-          initial concept resolution. These are static assets that are updated periodically.
+          The system includes bundled SNOMED CT RF2 (Release Format 2) files for UK Primary Care refset expansion
+          and concept descriptions. These files are required because the terminology server does not include UK
+          Primary Care domain refsets. These are static assets that are updated periodically.
         </p>
 
         <div className="border rounded-lg p-4">
@@ -224,7 +225,8 @@ export function VersionsInfo() {
             <p className="text-sm font-medium mb-1">RF2 Files (Manual)</p>
             <p className="text-xs text-muted-foreground">
               RF2 files are static assets that must be manually updated in the codebase and redeployed to use newer
-              releases. This ensures deterministic refset lookups and allows the application to work offline.
+              releases. These files are required because the terminology server does not include UK Primary Care domain
+              refsets, so refset expansion must be performed locally using the bundled RF2 files.
             </p>
           </div>
         </div>
