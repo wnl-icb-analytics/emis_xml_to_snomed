@@ -542,8 +542,8 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                             </div>
                           </div>
 
-                          {/* ECL Expression */}
-                          {group.eclExpression && (
+                          {/* ECL Expression - only show if there are output codes */}
+                          {group.eclExpression && outputCount > 0 && (
                             <div>
                               <div className="flex items-center justify-between mb-2">
                                 <h4 className="text-sm font-semibold">ECL Expression</h4>
@@ -602,7 +602,8 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                             </div>
                           )}
 
-                          {/* SQL Format Preview */}
+                          {/* SQL Format Preview - only show if there are output codes */}
+                          {outputCount > 0 && (
                           <div>
                             <div className="flex items-center justify-between mb-2">
                               <h4 className="text-sm font-semibold">SQL IN Clause Format</h4>
@@ -659,6 +660,7 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                               </code>
                             </div>
                           </div>
+                          )}
 
                           {/* Failed Codes Table */}
                           {group.failedCodes && group.failedCodes.length > 0 && (
