@@ -239,7 +239,12 @@ export default function ExploreMode() {
         )}
 
         <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-bold truncate">{selectedReport.searchName}</h2>
+          <h2 className="text-2xl font-bold truncate">{selectedReport.name}</h2>
+          {selectedReport.searchName !== selectedReport.name && (
+            <p className="text-sm text-muted-foreground mt-1">
+              {selectedReport.searchName}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground mt-1">
             {selectedReport.valueSets.length} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''}
           </p>
