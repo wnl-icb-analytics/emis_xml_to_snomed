@@ -71,7 +71,7 @@ export function VersionsInfo() {
           FHIR Terminology Server
         </h3>
         <p className="text-sm text-muted-foreground mb-4">
-          The system connects to a FHIR-compliant terminology server that provides SNOMED CT concept lookups,
+          The system connects to the One London FHIR Terminology Server, which provides SNOMED CT concept lookups,
           ValueSet expansions, and ConceptMap translations.
         </p>
 
