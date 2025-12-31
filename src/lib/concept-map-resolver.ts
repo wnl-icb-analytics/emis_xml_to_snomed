@@ -32,7 +32,7 @@ export async function resolveLatestConceptMap(
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
       },
       signal: AbortSignal.timeout(5000),
     });

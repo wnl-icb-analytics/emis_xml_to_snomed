@@ -48,7 +48,7 @@ async function fetchNewToken(): Promise<string> {
   const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
     },
     body: params.toString(),
   });

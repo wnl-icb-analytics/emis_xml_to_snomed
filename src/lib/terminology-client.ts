@@ -35,8 +35,8 @@ async function tryConceptMapTranslation(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
-        'Content-Type': 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
+        'Content-Type': 'application/fhir+json; charset=utf-8',
       },
       body: JSON.stringify({
         resourceType: 'Parameters',
@@ -204,8 +204,8 @@ export async function resolveHistoricalConcept(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
-        'Content-Type': 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
+        'Content-Type': 'application/fhir+json; charset=utf-8',
       },
       body: JSON.stringify({
         resourceType: 'Parameters',
@@ -383,7 +383,7 @@ export async function expandEclQuery(
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
       },
       // Add timeout and signal for better error handling
       signal: AbortSignal.timeout(30000), // 30 second timeout

@@ -16,7 +16,7 @@ async function queryConceptMap(conceptMapId: string, token: string) {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
       },
     });
 
@@ -52,7 +52,7 @@ async function searchConceptMapByUrl(canonicalUrl: string, token: string) {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
       },
     });
 
@@ -123,7 +123,7 @@ async function main() {
     const response = await fetch(sortedUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json',
+        Accept: 'application/fhir+json; charset=utf-8',
       },
     });
 
