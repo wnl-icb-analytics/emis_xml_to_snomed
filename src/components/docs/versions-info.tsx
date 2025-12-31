@@ -201,11 +201,16 @@ export function VersionsInfo() {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
           <p className="text-xs font-medium text-blue-900 mb-1">Updating RF2 Files</p>
           <p className="text-xs text-blue-800">
-            RF2 files are bundled with the application and are not automatically updated. To update to a new RF2
-            release, download the zip file from TRUD, unzip it, and drop the extracted folder into the project root,
-            then delete the old folder. The system will automatically detect and use the new version. For the most
-            current data, the system primarily relies on the FHIR terminology server for concept lookups and
-            expansions.
+            RF2 files are bundled with the application and are not automatically updated. If an update is available,
+            please contact the developer at{' '}
+            <a
+              href="mailto:eddie.davison@nhs.net"
+              className="text-blue-900 underline hover:no-underline"
+            >
+              eddie.davison@nhs.net
+            </a>{' '}
+            to request an update. For the most current data, the system primarily relies on the FHIR terminology
+            server for concept lookups and expansions.
           </p>
         </div>
       </section>
