@@ -466,6 +466,13 @@ export async function expandEclQuery(
       );
     }
 
+    // Unprocessable Entity - semantic validation error or invalid resource state
+    if (response.status === 422) {
+      throw new Error(
+        `Unprocessable Entity (422): The request was well-formed but contains semantic errors. ${errorText.substring(0, 200)}`
+      );
+    }
+
     // Server errors (500+)
     if (response.status >= 500) {
       console.error('Terminology server error:', {
