@@ -230,9 +230,20 @@ export async function resolveHistoricalConcept(
     });
 
     if (!response.ok) {
+      // 404 is acceptable - concept doesn't exist
       if (response.status === 404) {
         return { currentConceptId: conceptId, isHistorical: false };
       }
+
+      // Server errors (500+) should throw
+      if (response.status >= 500) {
+        const errorText = await response.text();
+        throw new Error(
+          `Terminology server error ${response.status} when looking up concept ${conceptId}: ${errorText.substring(0, 200)}`
+        );
+      }
+
+      // Other errors (400, 414, etc.) - log and return original
       console.warn(`Failed to lookup concept ${conceptId}: ${response.status}`);
       return { currentConceptId: conceptId, isHistorical: false };
     }
@@ -398,13 +409,21 @@ export async function expandEclQuery(
 
   if (!response.ok) {
     const errorText = await response.text();
+
+    // 404 is acceptable - means the concept doesn't exist in SNOMED
+    if (response.status === 404) {
+      console.warn(`Concept not found (404) in terminology server - returning empty result`);
+      return [];
+    }
+
+    // All other errors (414, 500, etc.) should throw as exceptions
     console.error('Terminology server error:', {
       status: response.status,
       statusText: response.statusText,
       error: errorText.substring(0, 500)
     });
     throw new Error(
-      `Terminology server request failed: ${response.status} ${errorText}`
+      `Terminology server request failed: ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`
     );
   }
 
