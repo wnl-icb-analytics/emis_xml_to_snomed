@@ -112,12 +112,19 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
         ]);
         csvContent = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n');
       } else {
-        const headers = ['SNOMED Code', 'Display', 'Source'];
-        const rows = group.concepts.map((c: any) => [
-          c.code,
-          `"${c.display.replace(/"/g, '""')}"`,
-          'Terminology Server',
-        ]);
+        // Determine which codes are descendants (not in parentCodes)
+        const parentCodesSet = new Set(group.parentCodes || []);
+
+        const headers = ['SNOMED Code', 'Display', 'Source', 'Is Descendant'];
+        const rows = group.concepts.map((c: any) => {
+          const isDescendant = !parentCodesSet.has(c.code);
+          return [
+            c.code,
+            `"${c.display.replace(/"/g, '""')}"`,
+            'Terminology Server',
+            isDescendant ? 'Yes' : 'No',
+          ];
+        });
         csvContent = [headers.join(','), ...rows.map((r: string[]) => r.join(','))].join('\n');
       }
     }
@@ -461,24 +468,37 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                     <TableHead className="w-32">Code</TableHead>
                                     <TableHead>Display</TableHead>
                                     <TableHead className="w-40">Source</TableHead>
+                                    <TableHead className="w-24 text-center whitespace-nowrap">Descendant</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {group.concepts.map((concept, i) => (
-                                    <TableRow key={i}>
-                                      <TableCell className="font-mono text-xs">{concept.code}</TableCell>
-                                      <TableCell className="text-sm">{concept.display}</TableCell>
-                                      <TableCell className="whitespace-nowrap">
-                                        <Badge className={`text-xs ${
-                                          concept.source === 'rf2_file'
-                                            ? 'bg-blue-100 text-blue-800 border-blue-200 hover:!bg-blue-100'
-                                            : 'bg-green-100 text-green-800 border-green-200 hover:!bg-green-100'
-                                        }`}>
-                                          {concept.source === 'rf2_file' ? 'RF2' : 'terminology_server'}
-                                        </Badge>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
+                                  {(() => {
+                                    // Determine which codes are descendants (not in parentCodes)
+                                    const parentCodesSet = new Set(group.parentCodes || []);
+
+                                    return group.concepts.map((concept, i) => {
+                                      const isDescendant = !parentCodesSet.has(concept.code);
+
+                                      return (
+                                        <TableRow key={i}>
+                                          <TableCell className="font-mono text-xs">{concept.code}</TableCell>
+                                          <TableCell className="text-sm">{concept.display}</TableCell>
+                                          <TableCell className="whitespace-nowrap">
+                                            <Badge className={`text-xs ${
+                                              concept.source === 'rf2_file'
+                                                ? 'bg-blue-100 text-blue-800 border-blue-200 hover:!bg-blue-100'
+                                                : 'bg-green-100 text-green-800 border-green-200 hover:!bg-green-100'
+                                            }`}>
+                                              {concept.source === 'rf2_file' ? 'RF2' : 'terminology_server'}
+                                            </Badge>
+                                          </TableCell>
+                                          <TableCell className="text-center whitespace-nowrap">
+                                            {isDescendant && <Badge variant="secondary" className="text-xs">Yes</Badge>}
+                                          </TableCell>
+                                        </TableRow>
+                                      );
+                                    });
+                                  })()}
                                 </TableBody>
                               </Table>
                             </div>

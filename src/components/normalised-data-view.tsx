@@ -75,16 +75,19 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
     ) || [];
 
     // Build expanded_concepts table
-    const expandedConcepts = expandedCodes.valueSetGroups?.flatMap((group) =>
-      group.concepts.map((concept, idx) => ({
+    const expandedConcepts = expandedCodes.valueSetGroups?.flatMap((group) => {
+      const parentCodesSet = new Set(group.parentCodes || []);
+
+      return group.concepts.map((concept, idx) => ({
         concept_id: `${group.valueSetId}-c${idx}`,
         valueset_id: group.valueSetId,
         snomed_code: concept.code,
         display: concept.display,
         source: concept.source || 'terminology_server', // Use actual source (rf2_file or terminology_server)
         exclude_children: concept.excludeChildren || false,
-      }))
-    ) || [];
+        is_descendant: !parentCodesSet.has(concept.code),
+      }));
+    }) || [];
 
     // Build failed_codes table
     const failedCodes = expandedCodes.valueSetGroups?.flatMap((group) =>
@@ -282,33 +285,43 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">display</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">source</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">exclude_children</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">is_descendant</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {expandedCodes.valueSetGroups?.flatMap((group) =>
-                group.concepts.map((concept, idx) => (
-                  <TableRow key={`${group.valueSetId}-${concept.code}-${idx}`}>
-                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">
-                      {`${group.valueSetId}-c${idx}`}
-                    </TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{group.valueSetId}</TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{concept.code}</TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{concept.display}</TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 whitespace-nowrap">
-                      <Badge className={`text-xs h-4 px-1 ${
-                        concept.source === 'rf2_file'
-                          ? 'bg-blue-100 text-blue-800 border-blue-200 hover:!bg-blue-100'
-                          : 'bg-green-100 text-green-800 border-green-200 hover:!bg-green-100'
-                      }`}>
-                        {concept.source === 'rf2_file' ? 'RF2' : 'terminology_server'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 text-xs text-center whitespace-nowrap">
-                      {concept.excludeChildren ? '✓' : ''}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
+              {expandedCodes.valueSetGroups?.flatMap((group) => {
+                const parentCodesSet = new Set(group.parentCodes || []);
+
+                return group.concepts.map((concept, idx) => {
+                  const isDescendant = !parentCodesSet.has(concept.code);
+
+                  return (
+                    <TableRow key={`${group.valueSetId}-${concept.code}-${idx}`}>
+                      <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">
+                        {`${group.valueSetId}-c${idx}`}
+                      </TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{group.valueSetId}</TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{concept.code}</TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{concept.display}</TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 whitespace-nowrap">
+                        <Badge className={`text-xs h-4 px-1 ${
+                          concept.source === 'rf2_file'
+                            ? 'bg-blue-100 text-blue-800 border-blue-200 hover:!bg-blue-100'
+                            : 'bg-green-100 text-green-800 border-green-200 hover:!bg-green-100'
+                        }`}>
+                          {concept.source === 'rf2_file' ? 'RF2' : 'terminology_server'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 text-xs text-center whitespace-nowrap">
+                        {concept.excludeChildren ? '✓' : ''}
+                      </TableCell>
+                      <TableCell className="h-6 px-2 py-0.5 text-xs text-center whitespace-nowrap">
+                        {isDescendant ? '✓' : ''}
+                      </TableCell>
+                    </TableRow>
+                  );
+                });
+              })}
             </TableBody>
           </Table>
         </div>
