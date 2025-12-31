@@ -59,22 +59,16 @@ async function tryConceptMapTranslation(
       signal: AbortSignal.timeout(10000),
     });
 
-    // Handle errors - return null for any error (404 or otherwise) to try fallback
+    // Handle errors - only 404 should try fallback, other errors should throw
     const errorResult = await handleFhirResponse(response, {
       overrides: {
-        404: 'RETURN_NULL',
-        // Don't throw on other errors either - we want to try fallback ConceptMap
-        401: 'RETURN_NULL',
-        403: 'RETURN_NULL',
-        429: 'RETURN_NULL',
-        414: 'RETURN_NULL',
-        422: 'RETURN_NULL',
+        404: 'RETURN_NULL', // Code not in this ConceptMap, try fallback
       },
-      context: `translating code via ConceptMap ${conceptMapId}`
+      context: `translating code ${emisCode} via ConceptMap ${conceptMapId}`
     });
 
     if (errorResult !== null) {
-      return null; // Try fallback ConceptMap
+      return null; // 404 - try fallback ConceptMap
     }
 
     const data: ConceptMapTranslateResponse = await response.json();
