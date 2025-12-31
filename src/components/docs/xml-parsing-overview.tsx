@@ -12,11 +12,11 @@ export function XmlParsingOverview() {
         The XML structure is navigated hierarchically to build a structured representation of the data.
       </p>
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-        <p className="text-xs font-medium text-blue-900 mb-1">Client-Side Processing for Security</p>
+        <p className="text-xs font-medium text-blue-900 mb-1">Processing on Your Device</p>
         <p className="text-xs text-blue-800">
-          All XML processing happens entirely in your browser—the file never reaches our servers. This protects the
-          application from malicious file uploads and potential security threats. Parsed data is stored locally in IndexedDB
-          for fast access and to handle large files (50MB+) efficiently.
+          All XML processing happens on your device—the file never leaves your computer or reaches our servers. This keeps
+          your data private, protects against malicious file uploads, and allows the application to handle very large files
+          without server-side limitations.
         </p>
       </div>
     </section>

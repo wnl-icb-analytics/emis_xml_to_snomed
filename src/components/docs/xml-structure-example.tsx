@@ -26,6 +26,11 @@ export function XmlStructureExample() {
       <name>[Search Name] Report Title</name>
       <description>Patients with condition X</description>
       <parent parentType="ACTIVE" />
+      <!-- For population based on another search, use:
+      <parent parentType="POP">
+        <SearchIdentifier reportGuid="parent-search-guid-here" />
+      </parent>
+      -->
       <population>
         <criteriaGroup>
           <definition>
@@ -81,7 +86,7 @@ export function XmlStructureExample() {
               <li><strong>Report name:</strong> Extracted from <code className="text-xs bg-muted px-1 py-0.5 rounded">name</code> element</li>
               <li><strong>Search name:</strong> Extracted from brackets in name: <code className="text-xs bg-muted px-1 py-0.5 rounded">[Search Name]</code></li>
               <li><strong>Description:</strong> Extracted from <code className="text-xs bg-muted px-1 py-0.5 rounded">description</code> element (optional)</li>
-              <li><strong>Parent metadata:</strong> From <code className="text-xs bg-muted px-1 py-0.5 rounded">parent</code> element (parentType: ACTIVE/ALL/POP, parentReportId for POP)</li>
+              <li><strong>Parent metadata:</strong> From <code className="text-xs bg-muted px-1 py-0.5 rounded">parent</code> element - parentType (ACTIVE/ALL/POP) and parentReportId (only present when parentType is POP, contains the XML ID of the parent search)</li>
               <li><strong>Folder path:</strong> Built from <code className="text-xs bg-muted px-1 py-0.5 rounded">reportFolder</code> hierarchy</li>
               <li><strong>Value sets:</strong> Extracted from nested <code className="text-xs bg-muted px-1 py-0.5 rounded">valueSet</code> elements in criteria</li>
               <li><strong>Codes:</strong> Each <code className="text-xs bg-muted px-1 py-0.5 rounded">values</code> element contains code, displayName, includeChildren, isRefset</li>

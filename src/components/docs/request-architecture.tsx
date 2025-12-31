@@ -1,6 +1,5 @@
-import { Network, ArrowRight, Database, CheckCircle2, FileText } from 'lucide-react';
+import { Network, ArrowRight, Database, CheckCircle2, FileText, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { ArrowRight as ArrowIcon, XCircle } from 'lucide-react';
 
 export function RequestArchitecture() {
   return (
@@ -137,27 +136,27 @@ export function RequestArchitecture() {
         <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="shrink-0">EMIS Code</Badge>
-            <ArrowIcon className="h-4 w-4 text-muted-foreground" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground text-xs">ConceptMap</span>
-            <ArrowIcon className="h-4 w-4 text-muted-foreground" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground text-xs">Historical</span>
-            <ArrowIcon className="h-4 w-4 text-muted-foreground" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <Badge variant="outline" className="shrink-0">Resolved Code</Badge>
           </div>
           <div className="flex items-center gap-2 ml-8">
-            <ArrowIcon className="h-4 w-4 text-muted-foreground rotate-90" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground rotate-90" />
           </div>
           <div className="flex items-center gap-2 ml-8">
             <span className="text-xs text-muted-foreground">Refset Detection (XML + RF2)</span>
           </div>
           <div className="flex items-center gap-2 ml-8">
-            <ArrowIcon className="h-4 w-4 text-muted-foreground rotate-90" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground rotate-90" />
           </div>
           <div className="flex items-center gap-2 ml-8">
             <Badge variant="secondary" className="shrink-0 text-xs">Is Refset?</Badge>
-            <ArrowIcon className="h-4 w-4 text-muted-foreground" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground text-xs">RF2 File OR ECL</span>
-            <ArrowIcon className="h-4 w-4 text-muted-foreground" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <Badge variant="outline" className="shrink-0">Expanded Concepts</Badge>
           </div>
           <div className="flex items-center gap-2 ml-8 mt-2 pt-2 border-t border-border">

@@ -120,21 +120,21 @@ export function XmlParsingSteps() {
             3
           </Badge>
           <div className="flex-1">
-            <h3 className="text-lg font-semibold mb-2">Fast Client-Side Storage</h3>
+            <h3 className="text-lg font-semibold mb-2">Local Browser Storage</h3>
             <p className="text-sm text-muted-foreground mb-3">
-              Once we've read and structured the XML data, we store it locally in your browser using IndexedDB.
+              Once we've read and structured the XML data, we store it locally in your browser.
               This allows for fast retrieval without re-parsing, and keeps all data secure on your device.
             </p>
             <div className="space-y-2 ml-4">
               <div className="flex items-start gap-2">
                 <Database className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">IndexedDB for Large Files</p>
+                  <p className="text-sm font-medium">Local Browser Database</p>
                   <p className="text-xs text-muted-foreground">
-                    IndexedDB can handle very large files (50MB+) efficiently. Once parsed, the structured data
-                    is stored here so it can be quickly retrieved when you switch between explore and extract modes,
-                    or refresh the page. Since files are processed client-side, malicious content never reaches the server,
-                    keeping the application secure from potential file upload attacks.
+                    The parsed data is stored in a local database in your browser (called IndexedDB). This database lives on your
+                    device and can handle very large files (50MB+) efficiently. The data persists when you refresh the page or
+                    switch between explore and extract modes, so you don't need to re-upload or re-parse the file. Since all
+                    processing happens in your browser, your data never reaches the server.
                   </p>
                 </div>
               </div>

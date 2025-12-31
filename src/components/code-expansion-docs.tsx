@@ -17,6 +17,7 @@ import { XmlParsingSteps } from '@/components/docs/xml-parsing-steps';
 import { CodeExpansionOverview } from '@/components/docs/code-expansion-overview';
 import { CodeExpansionSteps } from '@/components/docs/code-expansion-steps';
 import { RequestArchitecture } from '@/components/docs/request-architecture';
+import { DataExportInfo } from '@/components/docs/data-export-info';
 
 interface CodeExpansionDocsProps {
   open: boolean;
@@ -35,9 +36,10 @@ export function CodeExpansionDocs({ open, onOpenChange }: CodeExpansionDocsProps
         </DialogHeader>
 
         <Tabs defaultValue="xml-parsing" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList>
             <TabsTrigger value="xml-parsing">XML Parsing</TabsTrigger>
-            <TabsTrigger value="code-expansion">Code Expansion Routing</TabsTrigger>
+            <TabsTrigger value="code-expansion">Code Expansion</TabsTrigger>
+            <TabsTrigger value="data-export">Data Export</TabsTrigger>
           </TabsList>
 
           <TabsContent value="xml-parsing" className="space-y-6 py-4 mt-4">
@@ -54,6 +56,10 @@ export function CodeExpansionDocs({ open, onOpenChange }: CodeExpansionDocsProps
             <CodeExpansionSteps />
             <Separator />
             <RequestArchitecture />
+          </TabsContent>
+
+          <TabsContent value="data-export" className="space-y-6 py-4 mt-4">
+            <DataExportInfo />
           </TabsContent>
         </Tabs>
       </DialogContent>
