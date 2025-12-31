@@ -1,6 +1,7 @@
 import { getAccessToken } from './oauth-client';
 import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode } from './types';
 import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
+import { handleFhirResponse } from './fhir-error-handler';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
@@ -58,14 +59,22 @@ async function tryConceptMapTranslation(
       signal: AbortSignal.timeout(10000),
     });
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        return null; // Code not found in this ConceptMap
-      }
-      // For other errors, log but don't throw - will try fallback
-      const errorText = await response.text();
-      console.warn(`ConceptMap ${conceptMapId} failed for code ${emisCode}: ${response.status}`, errorText.substring(0, 200));
-      return null;
+    // Handle errors - return null for any error (404 or otherwise) to try fallback
+    const errorResult = await handleFhirResponse(response, {
+      overrides: {
+        404: 'RETURN_NULL',
+        // Don't throw on other errors either - we want to try fallback ConceptMap
+        401: 'RETURN_NULL',
+        403: 'RETURN_NULL',
+        429: 'RETURN_NULL',
+        414: 'RETURN_NULL',
+        422: 'RETURN_NULL',
+      },
+      context: `translating code via ConceptMap ${conceptMapId}`
+    });
+
+    if (errorResult !== null) {
+      return null; // Try fallback ConceptMap
     }
 
     const data: ConceptMapTranslateResponse = await response.json();
@@ -239,22 +248,19 @@ export async function resolveHistoricalConcept(
       signal: AbortSignal.timeout(10000),
     });
 
-    if (!response.ok) {
-      // 404 is acceptable - concept doesn't exist
-      if (response.status === 404) {
-        return { currentConceptId: conceptId, isHistorical: false };
-      }
+    // Handle errors - for concept lookup, 404 and other errors return concept as-is
+    try {
+      await handleFhirResponse(response, {
+        overrides: { 404: 'RETURN_NULL' },  // Will catch below
+        context: `looking up historical concept ${conceptId}`
+      });
+    } catch (error) {
+      // For any error, return concept as non-historical (original ID)
+      return { currentConceptId: conceptId, isHistorical: false };
+    }
 
-      // Server errors (500+) should throw
-      if (response.status >= 500) {
-        const errorText = await response.text();
-        throw new Error(
-          `Terminology server error ${response.status} when looking up concept ${conceptId}: ${errorText.substring(0, 200)}`
-        );
-      }
-
-      // Other errors (400, 414, etc.) - log and return original
-      console.warn(`Failed to lookup concept ${conceptId}: ${response.status}`);
+    // If handleFhirResponse returned null (404), treat as non-existent/non-historical
+    if (response.status === 404) {
       return { currentConceptId: conceptId, isHistorical: false };
     }
 
@@ -430,70 +436,14 @@ export async function expandEclQuery(
     );
   }
 
-  if (!response.ok) {
-    const errorText = await response.text();
+  // Handle FHIR errors - 404 returns empty array for this operation
+  const errorResult = await handleFhirResponse(response, {
+    overrides: { 404: 'RETURN_EMPTY' },
+    context: 'expanding ValueSet'
+  });
 
-    // 404 is acceptable - means the concept doesn't exist in SNOMED
-    if (response.status === 404) {
-      console.warn(`Concept not found (404) in terminology server - returning empty result`);
-      return [];
-    }
-
-    // Authentication/authorization errors - provide helpful message
-    if (response.status === 401) {
-      throw new Error(
-        `Authentication failed (401): Invalid or expired OAuth token. Please check your credentials.`
-      );
-    }
-
-    if (response.status === 403) {
-      throw new Error(
-        `Access forbidden (403): Your account does not have permission to access the terminology server.`
-      );
-    }
-
-    // Rate limiting
-    if (response.status === 429) {
-      throw new Error(
-        `Rate limited (429): Too many requests to terminology server. Please try again later.`
-      );
-    }
-
-    // URI too long - this shouldn't happen with batching but catch it anyway
-    if (response.status === 414) {
-      throw new Error(
-        `Request URI too long (414): ECL query exceeded URL length limit. This may indicate a batching issue.`
-      );
-    }
-
-    // Unprocessable Entity - semantic validation error or invalid resource state
-    if (response.status === 422) {
-      throw new Error(
-        `Unprocessable Entity (422): The request was well-formed but contains semantic errors. ${errorText.substring(0, 200)}`
-      );
-    }
-
-    // Server errors (500+)
-    if (response.status >= 500) {
-      console.error('Terminology server error:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorText.substring(0, 500)
-      });
-      throw new Error(
-        `Terminology server error (${response.status}): ${response.statusText}. The server may be experiencing issues.`
-      );
-    }
-
-    // All other 4xx errors
-    console.error('Terminology server error:', {
-      status: response.status,
-      statusText: response.statusText,
-      error: errorText.substring(0, 500)
-    });
-    throw new Error(
-      `Terminology server request failed: ${response.status} ${response.statusText}. ${errorText.substring(0, 200)}`
-    );
+  if (errorResult !== null) {
+    return errorResult; // Returns [] for 404
   }
 
   const data: FhirValueSetExpansion = await response.json();
