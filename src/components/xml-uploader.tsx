@@ -69,8 +69,12 @@ export default function XmlUploader() {
           parsedAt: parsedData.parsedAt,
           reports: parsedData.reports.map((report) => ({
             id: report.id,
+            xmlId: report.xmlId,
             name: report.name,
             searchName: report.searchName,
+            description: report.description,
+            parentType: report.parentType,
+            parentReportId: report.parentReportId,
             rule: report.rule,
             valueSets: report.valueSets.map((vs) => ({
               id: vs.id,

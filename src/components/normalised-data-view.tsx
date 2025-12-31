@@ -42,6 +42,9 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
       report_id: report.id,
       report_name: report.name,
       search_name: report.searchName,
+      description: report.description || '',
+      parent_type: report.parentType || '',
+      parent_report_id: report.parentReportId || '',
       folder_path: report.rule,
       xml_file_name: xmlFileName,
       parsed_at: expandedCodes.expandedAt,
@@ -153,6 +156,9 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">report_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">report_name</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">search_name</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">description</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">parent_type</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">parent_report_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">folder_path</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">xml_file_name</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">parsed_at</TableHead>
@@ -163,6 +169,9 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{report.id}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.name}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.searchName}</TableCell>
+                <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.description || ''}</TableCell>
+                <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.parentType || ''}</TableCell>
+                <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{report.parentReportId || ''}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.rule}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{xmlFileName}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{expandedCodes.expandedAt}</TableCell>

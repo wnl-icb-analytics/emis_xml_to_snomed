@@ -7,9 +7,13 @@ export interface EmisXmlDocument {
 }
 
 export interface EmisReport {
-  id: string;
+  id: string; // Deterministic ID generated from report content
+  xmlId: string; // Original GUID from XML <id> element
   name: string;
   searchName: string; // Extracted from [search_name] brackets
+  description?: string; // Description from XML
+  parentType?: 'ACTIVE' | 'ALL' | 'POP' | string; // Parent population type (ACTIVE=registered, ALL=all including deducted/deceased, POP=based on another search)
+  parentReportId?: string; // If parentType is POP, the GUID of the parent report (matches xmlId of parent)
   rule: string; // Determined by parent structure in XML
   valueSets: EmisValueSet[];
 }

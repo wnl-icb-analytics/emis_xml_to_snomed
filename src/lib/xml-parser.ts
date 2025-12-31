@@ -145,8 +145,15 @@ export async function parseEmisXml(
 
   const processedReports: EmisReport[] = reports
     .map((report: any, reportIndex: number) => {
+      const xmlId = report.id || '';
       const name = report.name || '';
       const searchName = extractSearchName(name);
+      const description = report.description || undefined;
+
+      // Extract parent information
+      const parent = report.parent;
+      const parentType = parent?.['@_parentType'] || parent?.parentType || undefined;
+      const parentReportId = parent?.SearchIdentifier?.['@_reportGuid'] || parent?.SearchIdentifier?.reportGuid || undefined;
 
       // Get the full folder path from the folder ID
       const folderId = report.folder;
@@ -225,8 +232,12 @@ export async function parseEmisXml(
 
       return {
         id: generateDeterministicId(name, searchName, rule, valueSets, reportIndex),
+        xmlId,
         name,
         searchName,
+        description,
+        parentType,
+        parentReportId,
         rule,
         valueSets,
       };

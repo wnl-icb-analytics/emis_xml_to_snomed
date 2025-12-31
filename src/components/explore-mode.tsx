@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { EmisReport, ExpandedCodeSet } from '@/lib/types';
+import { EmisReport, ExpandedCodeSet, EmisXmlDocument } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, AlertCircle, XCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { hasParsedXmlData } from '@/lib/storage';
+import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
 
 export default function ExploreMode() {
@@ -15,13 +15,15 @@ export default function ExploreMode() {
   const [isExpanding, setIsExpanding] = useState(false);
   const [hasXmlLoaded, setHasXmlLoaded] = useState(false);
   const [isCheckingXml, setIsCheckingXml] = useState(true);
+  const [allReports, setAllReports] = useState<EmisReport[]>([]);
   const cancellationRef = useRef(false);
 
   // Check if XML is already loaded in IndexedDB on mount
   useEffect(() => {
-    hasParsedXmlData().then((hasData) => {
-      if (hasData) {
+    loadParsedXmlData().then((data: EmisXmlDocument | null) => {
+      if (data) {
         setHasXmlLoaded(true);
+        setAllReports(data.reports || []);
       }
       setIsCheckingXml(false);
     });
@@ -35,14 +37,17 @@ export default function ExploreMode() {
       setExpandedData(null);
     };
 
-    const handleXmlParsed = () => {
+    const handleXmlParsed = (event: Event) => {
+      const customEvent = event as CustomEvent<EmisXmlDocument>;
       setHasXmlLoaded(true);
+      setAllReports(customEvent.detail.reports || []);
       setSelectedReport(null);
       setExpandedData(null);
     };
 
     const handleXmlCleared = () => {
       setHasXmlLoaded(false);
+      setAllReports([]);
       setSelectedReport(null);
       setExpandedData(null);
     };
@@ -238,6 +243,43 @@ export default function ExploreMode() {
           <p className="text-sm text-muted-foreground mt-1">
             {selectedReport.valueSets.length} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''}
           </p>
+          {selectedReport.description && (
+            <p className="text-sm text-foreground/70 mt-2 italic">
+              {selectedReport.description}
+            </p>
+          )}
+          {selectedReport.parentType && (
+            <p className="text-sm text-muted-foreground mt-2">
+              <span className="font-medium">Population:</span>{' '}
+              {selectedReport.parentType === 'ACTIVE' && 'Currently registered patients'}
+              {selectedReport.parentType === 'ALL' && 'All patients (including deducted and deceased)'}
+              {selectedReport.parentType === 'POP' && selectedReport.parentReportId && (() => {
+                console.log('Looking for parent report:', selectedReport.parentReportId);
+                console.log('All reports xmlIds:', allReports.map(r => ({ xmlId: r.xmlId, name: r.searchName })));
+                const parentReport = allReports.find(r => r.xmlId === selectedReport.parentReportId);
+                console.log('Found parent report:', parentReport);
+
+                if (parentReport) {
+                  return (
+                    <>
+                      Based on{' '}
+                      <button
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('report-selected', { detail: parentReport }));
+                        }}
+                        className="text-primary hover:underline font-medium cursor-pointer"
+                      >
+                        "{parentReport.searchName}"
+                      </button>
+                      {' '}search results
+                    </>
+                  );
+                } else {
+                  return `Based on another search (${selectedReport.parentReportId})`;
+                }
+              })()}
+            </p>
+          )}
         </div>
 
         {/* Prominent expand card - only show before expansion starts */}

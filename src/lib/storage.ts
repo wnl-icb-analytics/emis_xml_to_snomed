@@ -5,7 +5,7 @@
 
 const DB_NAME = 'emis-xml-analyser';
 const STORE_NAME = 'parsedXmlData';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped to force re-parse for xmlId and parent metadata fields
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -27,6 +27,17 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const oldVersion = event.oldVersion;
+
+      // If upgrading from version 1 to version 2, clear old data to force re-parse
+      if (oldVersion === 1 && DB_VERSION === 2) {
+        console.log('Upgrading database from v1 to v2 - clearing old data to force re-parse with new fields');
+        if (db.objectStoreNames.contains(STORE_NAME)) {
+          // Delete and recreate the store to clear data
+          db.deleteObjectStore(STORE_NAME);
+        }
+      }
+
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
