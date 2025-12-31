@@ -18,6 +18,7 @@ import { CodeExpansionOverview } from '@/components/docs/code-expansion-overview
 import { CodeExpansionSteps } from '@/components/docs/code-expansion-steps';
 import { RequestArchitecture } from '@/components/docs/request-architecture';
 import { DataExportInfo } from '@/components/docs/data-export-info';
+import { VersionsInfo } from '@/components/docs/versions-info';
 
 interface CodeExpansionDocsProps {
   open: boolean;
@@ -40,6 +41,7 @@ export function CodeExpansionDocs({ open, onOpenChange }: CodeExpansionDocsProps
             <TabsTrigger value="xml-parsing">XML Parsing</TabsTrigger>
             <TabsTrigger value="code-expansion">Code Expansion</TabsTrigger>
             <TabsTrigger value="data-export">Data Export</TabsTrigger>
+            <TabsTrigger value="versions">Versions</TabsTrigger>
           </TabsList>
 
           <TabsContent value="xml-parsing" className="space-y-6 py-4 mt-4">
@@ -60,6 +62,10 @@ export function CodeExpansionDocs({ open, onOpenChange }: CodeExpansionDocsProps
 
           <TabsContent value="data-export" className="space-y-6 py-4 mt-4">
             <DataExportInfo />
+          </TabsContent>
+
+          <TabsContent value="versions" className="space-y-6 py-4 mt-4">
+            <VersionsInfo />
           </TabsContent>
         </Tabs>
       </DialogContent>

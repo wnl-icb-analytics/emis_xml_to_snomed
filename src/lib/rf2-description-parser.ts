@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getRF2FolderName } from './rf2-version';
 
 /**
  * In-memory cache for RF2 description data
@@ -9,34 +10,34 @@ let descriptionCache: Map<string, string> | null = null;
 
 /**
  * Gets the path to the RF2 Description file
+ * Uses dynamic RF2 folder detection
  */
 function getRf2DescriptionFilePath(): string {
-  const pathsToTry = [
-    path.join(
-      process.cwd(),
-      'SnomedCT_UKPrimaryCareRF2_PRODUCTION_20251211T000000Z',
-      'Snapshot',
-      'Terminology',
-      'sct2_Description_UKPCSnapshot-en_1000230_20251211.txt'
-    ),
-    path.join(
-      process.cwd(),
-      'src',
-      'data',
-      'SnomedCT_UKPrimaryCareRF2_PRODUCTION_20251211T000000Z',
-      'Snapshot',
-      'Terminology',
-      'sct2_Description_UKPCSnapshot-en_1000230_20251211.txt'
-    ),
-  ];
+  const rf2Folder = getRF2FolderName();
 
-  for (const filePath of pathsToTry) {
-    if (fs.existsSync(filePath)) {
-      return filePath;
-    }
+  if (!rf2Folder) {
+    console.warn('No RF2 folder detected, description lookup will not work');
+    return '';
   }
 
-  return pathsToTry[0];
+  // Find the description file dynamically
+  const terminologyPath = path.join(process.cwd(), rf2Folder, 'Snapshot', 'Terminology');
+
+  if (!fs.existsSync(terminologyPath)) {
+    console.warn(`RF2 Terminology path not found: ${terminologyPath}`);
+    return '';
+  }
+
+  // Find the description file (pattern: sct2_Description_UKPCSnapshot-en_*.txt)
+  const files = fs.readdirSync(terminologyPath);
+  const descriptionFile = files.find(f => f.startsWith('sct2_Description_UKPCSnapshot-en_') && f.endsWith('.txt'));
+
+  if (!descriptionFile) {
+    console.warn(`No description file found in ${terminologyPath}`);
+    return '';
+  }
+
+  return path.join(terminologyPath, descriptionFile);
 }
 
 /**

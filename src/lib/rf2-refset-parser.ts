@@ -1,6 +1,7 @@
 import { SnomedConcept } from './types';
 import { getConceptDisplayNames } from './rf2-description-parser';
 import { resolveHistoricalConcept } from './terminology-client';
+import { getRF2FolderName } from './rf2-version';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -12,39 +13,35 @@ let refsetCache: Map<string, Set<string>> | null = null;
 
 /**
  * Gets the path to the RF2 Simple Refset file
- * Tries project root first, then src/data as fallback
+ * Uses dynamic RF2 folder detection, tries project root first, then src/data as fallback
  * Using Snapshot version as it contains all current active members
  */
 function getRf2RefsetFilePath(): string {
-  const pathsToTry = [
-    path.join(
-      process.cwd(),
-      'SnomedCT_UKPrimaryCareRF2_PRODUCTION_20251211T000000Z',
-      'Snapshot',
-      'Refset',
-      'Content',
-      'der2_Refset_SimpleUKPCSnapshot_1000230_20251211.txt'
-    ),
-    path.join(
-      process.cwd(),
-      'src',
-      'data',
-      'SnomedCT_UKPrimaryCareRF2_PRODUCTION_20251211T000000Z',
-      'Snapshot',
-      'Refset',
-      'Content',
-      'der2_Refset_SimpleUKPCSnapshot_1000230_20251211.txt'
-    ),
-  ];
+  const rf2Folder = getRF2FolderName();
 
-  for (const filePath of pathsToTry) {
-    if (fs.existsSync(filePath)) {
-      return filePath;
-    }
+  if (!rf2Folder) {
+    console.warn('No RF2 folder detected, refset expansion will not work');
+    return '';
   }
 
-  // Return the first path as default (will show error if not found)
-  return pathsToTry[0];
+  // Find the simple refset file dynamically
+  const refsetPath = path.join(process.cwd(), rf2Folder, 'Snapshot', 'Refset', 'Content');
+
+  if (!fs.existsSync(refsetPath)) {
+    console.warn(`RF2 Refset path not found: ${refsetPath}`);
+    return '';
+  }
+
+  // Find the simple refset file (pattern: der2_Refset_SimpleUKPCSnapshot_*.txt)
+  const files = fs.readdirSync(refsetPath);
+  const simpleRefsetFile = files.find(f => f.startsWith('der2_Refset_SimpleUKPCSnapshot_') && f.endsWith('.txt'));
+
+  if (!simpleRefsetFile) {
+    console.warn(`No simple refset file found in ${refsetPath}`);
+    return '';
+  }
+
+  return path.join(refsetPath, simpleRefsetFile);
 }
 
 /**

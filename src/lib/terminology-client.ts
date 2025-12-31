@@ -1,17 +1,23 @@
 import { getAccessToken } from './oauth-client';
 import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode } from './types';
+import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
   'https://ontology.onelondon.online/production1/fhir';
 
-const EMIS_TO_SNOMED_CONCEPT_MAP_ID = '8d2953a3-b70b-4727-8a6a-8b4d912535ad'; // Version 2.1.4
-const EMIS_TO_SNOMED_FALLBACK_CONCEPT_MAP_ID = 'b5519813-31eb-4cad-8c77-b8999420e3c9'; // DrugCodeID fallback
 const EMIS_CODE_SYSTEM = 'http://LDS.nhs/EMIS/CodeID/cs';
 const SNOMED_CODE_SYSTEM = 'http://snomed.info/sct';
 
 // Only accept equivalent or narrower mappings
 const ACCEPTED_EQUIVALENCES = ['equivalent', 'narrower'];
+
+/**
+ * Re-export ConceptMap versions for convenience
+ */
+export function getConceptMapVersions() {
+  return _getConceptMapVersions();
+}
 
 /**
  * Attempts translation using a specific ConceptMap ID
@@ -108,15 +114,19 @@ export async function translateEmisCodeToSnomed(
 ): Promise<TranslatedCode | null> {
   const token = await getAccessToken();
 
+  // Resolve latest ConceptMap IDs on first call
+  const primaryId = await getPrimaryConceptMapId(token);
+  const fallbackId = await getFallbackConceptMapId(token);
+
   // Try main ConceptMap first
-  const result = await tryConceptMapTranslation(emisCode, EMIS_TO_SNOMED_CONCEPT_MAP_ID, token);
+  const result = await tryConceptMapTranslation(emisCode, primaryId, token);
   if (result) {
     return result;
   }
 
   // If main ConceptMap failed (non-404 error) or returned no match, try fallback
   console.log(`Trying fallback ConceptMap for EMIS code ${emisCode}...`);
-  const fallbackResult = await tryConceptMapTranslation(emisCode, EMIS_TO_SNOMED_FALLBACK_CONCEPT_MAP_ID, token);
+  const fallbackResult = await tryConceptMapTranslation(emisCode, fallbackId, token);
   if (fallbackResult) {
     console.log(`Fallback ConceptMap succeeded for EMIS code ${emisCode}`);
     return fallbackResult;

@@ -14,7 +14,8 @@ export function CodeExpansionSteps() {
             <h3 className="text-lg font-semibold mb-2">ConceptMap Translation</h3>
             <p className="text-sm text-muted-foreground mb-3">
               All codes are first attempted to be translated from EMIS to SNOMED CT using FHIR ConceptMap resources.
-              The system tries a primary map, and if that fails, falls back to a secondary map specifically for drug codes.
+              The system automatically queries the terminology server for the latest active version of each ConceptMap,
+              then tries a primary map, and if that fails, falls back to a secondary map specifically for drug codes.
             </p>
 
             <div className="space-y-2 ml-4">
@@ -23,8 +24,9 @@ export function CodeExpansionSteps() {
                 <div>
                   <p className="text-sm font-medium">Primary ConceptMap</p>
                   <p className="text-xs text-muted-foreground">
-                    <code className="text-xs bg-muted px-1 py-0.5 rounded">8d2953a3-b70b-4727-8a6a-8b4d912535ad</code>
-                    {' '}(Version 2.1.4) - EMIS to SNOMED CodeID mapping
+                    Canonical URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">http://LDS.nhs/EMIStoSNOMED/CodeID/cm</code>
+                    <br />
+                    EMIS to SNOMED CodeID mapping (latest active version automatically resolved)
                   </p>
                 </div>
               </div>
@@ -34,8 +36,9 @@ export function CodeExpansionSteps() {
                 <div>
                   <p className="text-sm font-medium">Fallback ConceptMap</p>
                   <p className="text-xs text-muted-foreground">
-                    <code className="text-xs bg-muted px-1 py-0.5 rounded">b5519813-31eb-4cad-8c77-b8999420e3c9</code>
-                    {' '}(Version 7.1.1) - DrugCodeID fallback for drug codes
+                    Canonical URL: <code className="text-xs bg-muted px-1 py-0.5 rounded">http://LDS.nhs/EMIS_to_Snomed/DrugCodeID/cm</code>
+                    <br />
+                    DrugCodeID fallback for drug codes (latest active version automatically resolved)
                   </p>
                 </div>
               </div>
