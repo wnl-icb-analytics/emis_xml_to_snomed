@@ -516,16 +516,16 @@ export default function BatchExtractor() {
 
             {status === 'idle' && (
               <div className="mt-4 pt-4 border-t flex flex-col items-center text-center space-y-3">
-                <p className="text-sm text-muted-foreground max-w-2xl">
+                <p className="text-sm text-foreground/80 max-w-2xl">
                   This will expand SNOMED codes for all selected reports and generate normalised tables ready for data warehouse import.
                 </p>
                 <Button
                   onClick={handleExtract}
                   disabled={isExtracting}
                   size="lg"
-                  className="text-base px-8 py-6 h-auto"
+                  className="text-base px-8 py-6 h-auto [&_svg]:size-6"
                 >
-                  <Package className="mr-2 h-5 w-5" />
+                  <Package className="mr-2" />
                   Extract All
                 </Button>
               </div>
