@@ -217,8 +217,12 @@ export default function BatchExtractor() {
         // Add report row to reports table
         normalizedData.reports.push({
           report_id: report.id,
+          report_xml_id: report.xmlId,
           report_name: report.name,
           search_name: report.searchName,
+          description: report.description || '',
+          parent_type: report.parentType || '',
+          parent_report_id: report.parentReportId || '',
           folder_path: report.rule,
           xml_file_name: report.rule.split(' > ')[0] || 'unknown.xml',
           parsed_at: new Date().toISOString(),

@@ -6,6 +6,7 @@
 export const normalizedTableColumns = {
   reports: [
     { key: 'report_id', label: 'report_id' },
+    { key: 'report_xml_id', label: 'report_xml_id' },
     { key: 'report_name', label: 'report_name' },
     { key: 'search_name', label: 'search_name' },
     { key: 'description', label: 'description' },

@@ -40,6 +40,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
     // Build reports table
     const reports = [{
       report_id: report.id,
+      report_xml_id: report.xmlId,
       report_name: report.name,
       search_name: report.searchName,
       description: report.description || '',
@@ -154,6 +155,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">report_id</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">report_xml_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">report_name</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">search_name</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">description</TableHead>
@@ -167,6 +169,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
             <TableBody>
               <TableRow>
                 <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{report.id}</TableCell>
+                <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{report.xmlId}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.name}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.searchName}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.description || ''}</TableCell>
