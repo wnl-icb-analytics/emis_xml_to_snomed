@@ -387,6 +387,7 @@ export async function POST(request: NextRequest) {
       isRefset,
       codeSystems,
       valueSetMapping,
+      equivalenceFilter = 'strict', // Default to strict filter
     } = body;
 
     if (!parentCodes || parentCodes.length === 0) {
@@ -401,8 +402,8 @@ export async function POST(request: NextRequest) {
     // If translation fails (404) -> assume already valid SNOMED
     // This handles unreliable codeSystem labels in XML
 
-    console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes...`);
-    const codeToSnomedMap = await translateEmisCodesToSnomed(parentCodes);
+    console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes (equivalence filter: ${equivalenceFilter})...`);
+    const codeToSnomedMap = await translateEmisCodesToSnomed(parentCodes, equivalenceFilter);
     console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} assumed already SNOMED`);
 
     // Log first few translated mappings

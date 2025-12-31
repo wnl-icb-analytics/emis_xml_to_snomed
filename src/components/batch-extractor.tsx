@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAppMode } from '@/contexts/AppModeContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { EmisReport, ExpandedCodeSet } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,6 +37,7 @@ interface NormalizedTables {
 
 export default function BatchExtractor() {
   const { selectedReportIds, toggleReportSelection, setIsExtracting: setContextIsExtracting } = useAppMode();
+  const { equivalenceFilter } = useSettings();
   const [reports, setReports] = useState<EmisReport[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const cancellationRef = useRef(false);
@@ -259,7 +261,8 @@ export default function BatchExtractor() {
               report.id,
               report.name,
               vs,
-              vsIndex
+              vsIndex,
+              equivalenceFilter
             );
 
             if (result.success && result.data && result.data.valueSetGroups) {

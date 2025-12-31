@@ -4,6 +4,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import LayoutWrapper from '@/components/layout-wrapper';
 import { AppModeProvider } from '@/contexts/AppModeContext';
+import { SettingsProvider } from '@/contexts/SettingsContext';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -21,10 +22,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AppModeProvider>
-          <LayoutWrapper>{children}</LayoutWrapper>
-          <Toaster />
-        </AppModeProvider>
+        <SettingsProvider>
+          <AppModeProvider>
+            <LayoutWrapper>{children}</LayoutWrapper>
+            <Toaster />
+          </AppModeProvider>
+        </SettingsProvider>
       </body>
     </html>
   );

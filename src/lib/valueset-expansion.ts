@@ -1,4 +1,4 @@
-import { EmisValueSet } from './types';
+import { EmisValueSet, EquivalenceFilter } from './types';
 
 /**
  * Prepares a ValueSet for expansion by extracting codes, display names, and metadata
@@ -53,7 +53,8 @@ export async function expandValueSet(
   reportId: string,
   reportName: string,
   vs: EmisValueSet,
-  vsIndex: number
+  vsIndex: number,
+  equivalenceFilter?: EquivalenceFilter
 ) {
   const preparedData = prepareValueSetForExpansion(vs, vsIndex);
 
@@ -64,6 +65,7 @@ export async function expandValueSet(
       featureId: reportId,
       featureName: reportName,
       ...preparedData,
+      ...(equivalenceFilter && { equivalenceFilter }),
     }),
   });
 

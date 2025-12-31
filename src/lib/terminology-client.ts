@@ -1,5 +1,5 @@
 import { getAccessToken } from './oauth-client';
-import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode } from './types';
+import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode, EquivalenceFilter } from './types';
 import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
 import { handleFhirResponse } from './fhir-error-handler';
 
@@ -10,8 +10,26 @@ const TERMINOLOGY_SERVER_BASE =
 const EMIS_CODE_SYSTEM = 'http://LDS.nhs/EMIS/CodeID/cs';
 const SNOMED_CODE_SYSTEM = 'http://snomed.info/sct';
 
-// Only accept equivalent or narrower mappings
+// Default: Only accept equivalent or narrower mappings
 const ACCEPTED_EQUIVALENCES = ['equivalent', 'narrower'];
+
+/**
+ * Gets the list of accepted equivalences based on the filter setting
+ */
+function getAcceptedEquivalences(filter: EquivalenceFilter): string[] {
+  switch (filter) {
+    case 'strict':
+      return ['equivalent', 'narrower'];
+    case 'with-broader':
+      return ['equivalent', 'narrower', 'broader'];
+    case 'with-related':
+      return ['equivalent', 'narrower', 'related-to'];
+    case 'all':
+      return ['equivalent', 'narrower', 'broader', 'related-to', 'inexact'];
+    default:
+      return ['equivalent', 'narrower'];
+  }
+}
 
 /**
  * Re-export ConceptMap versions for convenience
@@ -27,7 +45,8 @@ export function getConceptMapVersions() {
 async function tryConceptMapTranslation(
   emisCode: string,
   conceptMapId: string,
-  token: string
+  token: string,
+  acceptedEquivalences: string[]
 ): Promise<TranslatedCode | null> {
   const url = `${TERMINOLOGY_SERVER_BASE}/ConceptMap/${conceptMapId}/$translate`;
 
@@ -82,9 +101,9 @@ async function tryConceptMapTranslation(
           const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
           const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
 
-          // CRITICAL: Only accept equivalent or narrower mappings
-          if (equivalence && !ACCEPTED_EQUIVALENCES.includes(equivalence)) {
-            return null; // Rejected due to equivalence - don't log, will try fallback
+          // Check if equivalence matches the configured filter
+          if (equivalence && !acceptedEquivalences.includes(equivalence)) {
+            return null; // Rejected due to equivalence filter - don't log, will try fallback
           }
 
           const conceptPart = matchParam.part.find((p) => p.name === 'concept');
@@ -109,27 +128,28 @@ async function tryConceptMapTranslation(
 /**
  * Translates a single EMIS code to SNOMED using ConceptMap
  * Tries the main ConceptMap first, then falls back to the DrugCodeID ConceptMap if the main one fails
- * Only accepts mappings with equivalence "equivalent" or "narrower"
- * Returns null for "broader", "related", or other equivalences
+ * Accepts mappings based on the equivalence filter setting
  */
 export async function translateEmisCodeToSnomed(
-  emisCode: string
+  emisCode: string,
+  equivalenceFilter: EquivalenceFilter = 'strict'
 ): Promise<TranslatedCode | null> {
   const token = await getAccessToken();
+  const acceptedEquivalences = getAcceptedEquivalences(equivalenceFilter);
 
   // Resolve latest ConceptMap IDs on first call
   const primaryId = await getPrimaryConceptMapId(token);
   const fallbackId = await getFallbackConceptMapId(token);
 
   // Try main ConceptMap first
-  const result = await tryConceptMapTranslation(emisCode, primaryId, token);
+  const result = await tryConceptMapTranslation(emisCode, primaryId, token, acceptedEquivalences);
   if (result) {
     return result;
   }
 
   // If main ConceptMap failed (non-404 error) or returned no match, try fallback
   console.log(`Trying fallback ConceptMap for EMIS code ${emisCode}...`);
-  const fallbackResult = await tryConceptMapTranslation(emisCode, fallbackId, token);
+  const fallbackResult = await tryConceptMapTranslation(emisCode, fallbackId, token, acceptedEquivalences);
   if (fallbackResult) {
     console.log(`Fallback ConceptMap succeeded for EMIS code ${emisCode}`);
     return fallbackResult;
@@ -140,16 +160,18 @@ export async function translateEmisCodeToSnomed(
 
 /**
  * Batch translates EMIS codes to SNOMED using ConceptMap
- * Only accepts mappings with equivalence "equivalent" or "narrower"
+ * Accepts mappings based on the equivalence filter setting
  * Returns a map of EMIS code -> TranslatedCode (with display name)
  */
 export async function translateEmisCodesToSnomed(
-  emisCodes: string[]
+  emisCodes: string[],
+  equivalenceFilter: EquivalenceFilter = 'strict'
 ): Promise<Map<string, TranslatedCode>> {
   const mapping = new Map<string, TranslatedCode>();
   const uniqueCodes = [...new Set(emisCodes)];
+  const acceptedEquivalences = getAcceptedEquivalences(equivalenceFilter);
 
-  console.log(`Translating ${uniqueCodes.length} unique EMIS codes to SNOMED (accepting only 'equivalent' or 'narrower')...`);
+  console.log(`Translating ${uniqueCodes.length} unique EMIS codes to SNOMED (filter: ${equivalenceFilter}, accepting: ${acceptedEquivalences.join(', ')})...`);
 
   const BATCH_SIZE = 10;
   let successCount = 0;
@@ -160,7 +182,7 @@ export async function translateEmisCodesToSnomed(
     const batch = uniqueCodes.slice(i, i + BATCH_SIZE);
 
     const promises = batch.map(async (emisCode) => {
-      const translatedCode = await translateEmisCodeToSnomed(emisCode);
+      const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter);
       if (translatedCode) {
         mapping.set(emisCode, translatedCode);
         successCount++;
@@ -178,7 +200,7 @@ export async function translateEmisCodesToSnomed(
     }
   }
 
-  console.log(`ConceptMap translation complete: ${successCount} successful, ${failureCount} failed/rejected (equivalence filter: ${ACCEPTED_EQUIVALENCES.join(', ')})`);
+  console.log(`ConceptMap translation complete: ${successCount} successful, ${failureCount} failed/rejected (equivalence filter: ${equivalenceFilter}, accepted: ${acceptedEquivalences.join(', ')})`);
 
   if (mapping.size < uniqueCodes.length) {
     const missing = uniqueCodes.filter(code => !mapping.has(code));

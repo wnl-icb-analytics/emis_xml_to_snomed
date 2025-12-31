@@ -8,6 +8,7 @@ import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight } from 'lucide-re
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
+import { useSettings } from '@/contexts/SettingsContext';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export default function ExploreMode() {
+  const { equivalenceFilter } = useSettings();
   const [selectedReport, setSelectedReport] = useState<EmisReport | null>(null);
   const [expandedData, setExpandedData] = useState<ExpandedCodeSet | null>(null);
   const [isExpanding, setIsExpanding] = useState(false);
@@ -134,7 +136,8 @@ export default function ExploreMode() {
           reportToExpand.id,
           reportToExpand.name,
           vs,
-          vsIndex
+          vsIndex,
+          equivalenceFilter
         );
 
         if (result.success && result.data && result.data.valueSetGroups) {

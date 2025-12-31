@@ -17,11 +17,13 @@ import { Separator } from '@/components/ui/separator';
 import ModeToggle from '@/components/mode-toggle';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { CodeExpansionDocs } from '@/components/code-expansion-docs';
-import { HelpCircle } from 'lucide-react';
+import { SettingsDialog } from '@/components/settings-dialog';
+import { HelpCircle, Settings } from 'lucide-react';
 
 export function AppSidebar() {
   const { mode } = useAppMode();
   const [docsOpen, setDocsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <Sidebar collapsible="icon" style={{ '--sidebar-width': '28rem' } as React.CSSProperties}>
@@ -34,15 +36,26 @@ export function AppSidebar() {
                 SNOMED CT Code Expansion
               </p>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0"
-              onClick={() => setDocsOpen(true)}
-              title="View code expansion documentation"
-            >
-              <HelpCircle className="h-4 w-4" />
-            </Button>
+            <div className="flex gap-1 shrink-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setSettingsOpen(true)}
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setDocsOpen(true)}
+                title="View code expansion documentation"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <ModeToggle />
         </div>
@@ -68,6 +81,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CodeExpansionDocs open={docsOpen} onOpenChange={setDocsOpen} />
     </Sidebar>
   );

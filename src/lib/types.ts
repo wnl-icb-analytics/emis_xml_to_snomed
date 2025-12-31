@@ -191,6 +191,8 @@ export interface ParseXmlResponse {
   error?: string;
 }
 
+export type EquivalenceFilter = 'strict' | 'with-broader' | 'with-related' | 'all';
+
 export interface ExpandCodesRequest {
   featureId: string;
   featureName: string;
@@ -201,6 +203,7 @@ export interface ExpandCodesRequest {
   isRefset?: boolean[]; // Track which codes are refsets
   codeSystems?: string[]; // Code system for each code (e.g., "SNOMED_CONCEPT", "EMIS")
   valueSetMapping?: ValueSetMapping[]; // Track which codes belong to which ValueSet
+  equivalenceFilter?: EquivalenceFilter; // ConceptMap equivalence filter setting
 }
 
 export interface ValueSetMapping {

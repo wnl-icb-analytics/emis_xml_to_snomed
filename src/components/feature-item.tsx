@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import CodeDisplay from './code-display';
 import { Feature, ExpandedCodeSet } from '@/lib/types';
+import { useSettings } from '@/contexts/SettingsContext';
 
 interface FeatureItemProps {
   feature: Feature;
@@ -19,6 +20,7 @@ export default function FeatureItem({
   isSelected,
   onToggle,
 }: FeatureItemProps) {
+  const { equivalenceFilter } = useSettings();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [expandedCodes, setExpandedCodes] = useState<ExpandedCodeSet | null>(
@@ -58,6 +60,7 @@ export default function FeatureItem({
           parentCodes,
           excludedCodes,
           includeChildren,
+          equivalenceFilter,
         }),
       });
 
