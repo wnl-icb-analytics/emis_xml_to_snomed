@@ -7,6 +7,7 @@ interface RF2VersionInfo {
   folderName: string; // Full folder name
   module: string; // Module identifier
   edition: string; // Edition name
+  refsets?: string[]; // List of refset names
 }
 
 let cachedRF2Version: RF2VersionInfo | null = null;
@@ -64,16 +65,17 @@ export function detectRF2Version(): RF2VersionInfo | null {
 
     const releaseDate = `${parseInt(day, 10)} ${monthName} ${year}`;
 
-    // Try to detect module from folder structure
+    // Try to detect module and refsets from folder structure
     let module = 'Unknown';
+    let refsets: string[] = [];
     try {
-      const snapshotPath = path.join(projectRoot, rf2Folder, 'Snapshot', 'Refset');
-      if (fs.existsSync(snapshotPath)) {
-        const refsetFiles = fs.readdirSync(snapshotPath, { recursive: true }) as string[];
-        const refsetFile = refsetFiles.find((f) => f.endsWith('.txt'));
-        if (refsetFile) {
-          // Extract module from filename (e.g., _1000230_)
-          const moduleMatch = refsetFile.match(/_(\d{7,})_/);
+      const refsetPath = path.join(projectRoot, rf2Folder, 'Snapshot', 'Refset', 'Content');
+      if (fs.existsSync(refsetPath)) {
+        const refsetFiles = fs.readdirSync(refsetPath).filter((f) => f.endsWith('.txt'));
+
+        // Extract module from first refset filename (e.g., _1000230_)
+        if (refsetFiles.length > 0) {
+          const moduleMatch = refsetFiles[0].match(/_(\d{7,})_/);
           if (moduleMatch) {
             module = `${moduleMatch[1]}`;
             // Add known module names
@@ -82,9 +84,20 @@ export function detectRF2Version(): RF2VersionInfo | null {
             }
           }
         }
+
+        // Extract refset names from filenames
+        // Format: der2_[c]Refset_{RefsetName}UKPCSnapshot_...
+        refsets = refsetFiles.map((filename) => {
+          const match = filename.match(/der2_c?Refset_(.+?)UKPC/);
+          if (match) {
+            // Convert camelCase to Title Case with spaces
+            return match[1].replace(/([A-Z])/g, ' $1').trim();
+          }
+          return filename.replace('.txt', '');
+        });
       }
     } catch (error) {
-      console.warn('Could not detect module from RF2 files:', error);
+      console.warn('Could not detect module/refsets from RF2 files:', error);
     }
 
     const versionInfo: RF2VersionInfo = {
@@ -93,6 +106,7 @@ export function detectRF2Version(): RF2VersionInfo | null {
       folderName: rf2Folder,
       module,
       edition: edition.replace(/([A-Z])/g, ' $1').trim(), // Add spaces: "UKPrimaryCare" -> "UK Primary Care"
+      refsets: refsets.length > 0 ? refsets : undefined,
     };
 
     // Cache the result

@@ -15,6 +15,7 @@ interface RF2VersionInfo {
   folderName: string;
   module: string;
   edition: string;
+  refsets?: string[];
 }
 
 interface RF2UpdateInfo {
@@ -180,14 +181,16 @@ export function VersionsInfo() {
               <div className="border-t border-border pt-2">
                 <strong>Folder:</strong> <code className="text-xs">{rf2Version.folderName}</code>
               </div>
-              <div className="border-t border-border pt-2">
-                <strong>Included Refsets:</strong>
-                <ul className="list-disc list-inside ml-2 mt-1 space-y-0.5">
-                  <li>Simple Refset</li>
-                  <li>Association Refset</li>
-                  <li>Attribute Value Refset</li>
-                </ul>
-              </div>
+              {rf2Version.refsets && rf2Version.refsets.length > 0 && (
+                <div className="border-t border-border pt-2">
+                  <strong>Included Refsets:</strong>
+                  <ul className="list-disc list-inside ml-2 mt-1 space-y-0.5">
+                    {rf2Version.refsets.map((refset, idx) => (
+                      <li key={idx}>{refset}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded">
