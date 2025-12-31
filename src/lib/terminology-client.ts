@@ -397,13 +397,26 @@ export async function expandEclQuery(
       errorType: error?.constructor?.name || typeof error,
       errorStringified: JSON.stringify(error, Object.getOwnPropertyNames(error)).substring(0, 500)
     };
-    
+
     console.error('Network error fetching from terminology server - Full details:', errorDetails);
     console.error('Error object keys:', Object.keys(error || {}));
     console.error('Error object:', error);
-    
+
+    // Specific error messages for common network issues
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw new Error(
+        `Request timeout (30s): The terminology server did not respond in time. The server may be overloaded or experiencing issues.`
+      );
+    }
+
+    if (error?.message?.includes('fetch') || error?.message?.includes('network')) {
+      throw new Error(
+        `Network error: Unable to connect to terminology server. Please check your internet connection.`
+      );
+    }
+
     throw new Error(
-      `Network error connecting to terminology server: ${error?.message || 'Unknown error'} (${error?.name || 'Unknown error type'}). URL: ${fullUrl.substring(0, 200)}...`
+      `Network error connecting to terminology server: ${error?.message || 'Unknown error'} (${error?.name || 'Unknown error type'})`
     );
   }
 
@@ -416,7 +429,46 @@ export async function expandEclQuery(
       return [];
     }
 
-    // All other errors (414, 500, etc.) should throw as exceptions
+    // Authentication/authorization errors - provide helpful message
+    if (response.status === 401) {
+      throw new Error(
+        `Authentication failed (401): Invalid or expired OAuth token. Please check your credentials.`
+      );
+    }
+
+    if (response.status === 403) {
+      throw new Error(
+        `Access forbidden (403): Your account does not have permission to access the terminology server.`
+      );
+    }
+
+    // Rate limiting
+    if (response.status === 429) {
+      throw new Error(
+        `Rate limited (429): Too many requests to terminology server. Please try again later.`
+      );
+    }
+
+    // URI too long - this shouldn't happen with batching but catch it anyway
+    if (response.status === 414) {
+      throw new Error(
+        `Request URI too long (414): ECL query exceeded URL length limit. This may indicate a batching issue.`
+      );
+    }
+
+    // Server errors (500+)
+    if (response.status >= 500) {
+      console.error('Terminology server error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText.substring(0, 500)
+      });
+      throw new Error(
+        `Terminology server error (${response.status}): ${response.statusText}. The server may be experiencing issues.`
+      );
+    }
+
+    // All other 4xx errors
     console.error('Terminology server error:', {
       status: response.status,
       statusText: response.statusText,
