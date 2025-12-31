@@ -181,12 +181,11 @@ export function VersionsInfo() {
                 <strong>Folder:</strong> <code className="text-xs">{rf2Version.folderName}</code>
               </div>
               <div className="border-t border-border pt-2">
-                <strong>Key Refsets:</strong>
+                <strong>Included Refsets:</strong>
                 <ul className="list-disc list-inside ml-2 mt-1 space-y-0.5">
-                  <li>UK Primary Care Simple Refset</li>
-                  <li>UK Primary Care Language Refset</li>
-                  <li>Extended Map Refsets</li>
-                  <li>Complex Map Refsets</li>
+                  <li>Simple Refset</li>
+                  <li>Association Refset</li>
+                  <li>Attribute Value Refset</li>
                 </ul>
               </div>
             </div>
