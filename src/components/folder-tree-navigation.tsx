@@ -27,6 +27,7 @@ import { buildFolderTree, navigateToFolder, searchFolderTree, getFolderContents,
 
 export default function FolderTreeNavigation() {
   const [parsedData, setParsedData] = useState<EmisXmlDocument | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [currentPath, setCurrentPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
@@ -41,6 +42,9 @@ export default function FolderTreeNavigation() {
       })
       .catch((error) => {
         console.error('Failed to load stored data:', error);
+      })
+      .finally(() => {
+        setIsLoading(false);
       });
   }, []);
 
@@ -48,6 +52,7 @@ export default function FolderTreeNavigation() {
     const handleXmlParsed = (event: Event) => {
       const customEvent = event as CustomEvent<EmisXmlDocument>;
       setParsedData(customEvent.detail);
+      setIsLoading(false);
 
       // Note: xml-uploader now handles saving to IndexedDB before dispatching this event
       // This ensures data is available immediately when components mount after mode switch
@@ -59,6 +64,7 @@ export default function FolderTreeNavigation() {
 
     const handleXmlCleared = () => {
       setParsedData(null);
+      setIsLoading(false);
       setCurrentPath([]);
       setSelectedReportId(null);
       setExpandedFolders(new Set());
@@ -195,7 +201,8 @@ export default function FolderTreeNavigation() {
     );
   };
 
-  if (!parsedData) {
+  // Don't show "No file loaded" while still loading from IndexedDB
+  if (!parsedData && !isLoading) {
     return (
       <div className="space-y-3">
         <div className="text-sm text-muted-foreground px-2">
@@ -203,6 +210,11 @@ export default function FolderTreeNavigation() {
         </div>
       </div>
     );
+  }
+
+  // Show nothing while loading (search input will appear once data loads)
+  if (isLoading) {
+    return null;
   }
 
   return (
