@@ -100,12 +100,18 @@ export function detectRF2Version(): RF2VersionInfo | null {
       console.warn('Could not detect module/refsets from RF2 files:', error);
     }
 
+    // Format edition name with proper spacing
+    // "UKPrimaryCare" -> "UK Primary Care" (not "U K Primary Care")
+    let formattedEdition = edition
+      .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space between lowercase and uppercase
+      .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2'); // Add space between consecutive caps and lowercase
+
     const versionInfo: RF2VersionInfo = {
       releaseDate,
       releaseId,
       folderName: rf2Folder,
       module,
-      edition: edition.replace(/([A-Z])/g, ' $1').trim(), // Add spaces: "UKPrimaryCare" -> "UK Primary Care"
+      edition: formattedEdition,
       refsets: refsets.length > 0 ? refsets : undefined,
     };
 
