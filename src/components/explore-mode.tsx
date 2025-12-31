@@ -114,6 +114,7 @@ export default function ExploreMode() {
         totalCount: 0,
         sqlFormattedCodes: '',
         expandedAt: new Date().toISOString(),
+        equivalenceFilterSetting: equivalenceFilter,
         valueSetGroups: [],
       };
       setExpandedData(initialData);

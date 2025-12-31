@@ -112,6 +112,7 @@ export interface ExpandedCodeSet {
   totalCount: number;
   sqlFormattedCodes: string; // Single-quoted, comma-separated
   expandedAt: string;
+  equivalenceFilterSetting: EquivalenceFilter; // ConceptMap equivalence filter setting used during expansion
   valueSetGroups?: ValueSetGroup[]; // Codes grouped by ValueSet
   error?: string; // Error message if expansion failed
 }

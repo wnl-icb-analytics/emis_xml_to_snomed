@@ -48,6 +48,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
       parent_report_id: report.parentReportId || '',
       folder_path: report.rule,
       xml_file_name: xmlFileName,
+      equivalence_filter_setting: expandedCodes.equivalenceFilterSetting,
       parsed_at: expandedCodes.expandedAt,
     }];
 
@@ -164,6 +165,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">parent_report_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">folder_path</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">xml_file_name</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">equivalence_filter_setting</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">parsed_at</TableHead>
               </TableRow>
             </TableHeader>
@@ -178,6 +180,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{report.parentReportId || ''}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{report.rule}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{xmlFileName}</TableCell>
+                <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{expandedCodes.equivalenceFilterSetting}</TableCell>
                 <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{expandedCodes.expandedAt}</TableCell>
               </TableRow>
             </TableBody>

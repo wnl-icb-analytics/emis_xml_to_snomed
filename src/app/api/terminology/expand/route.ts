@@ -571,6 +571,7 @@ export async function POST(request: NextRequest) {
       totalCount: concepts.length,
       sqlFormattedCodes: sqlFormatted,
       expandedAt: new Date().toISOString(),
+      equivalenceFilterSetting: equivalenceFilter,
       valueSetGroups: valueSetGroups.length > 0 ? valueSetGroups : undefined,
     };
 

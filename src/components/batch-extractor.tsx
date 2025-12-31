@@ -216,8 +216,8 @@ export default function BatchExtractor() {
         completedReports++;
         const totalValueSets = report.valueSets.length;
 
-        // Add report row to reports table
-        normalizedData.reports.push({
+        // Add report row to reports table (equivalence filter setting will be added after first ValueSet expansion)
+        const reportRow = {
           report_id: report.id,
           report_xml_id: report.xmlId,
           report_name: report.name,
@@ -227,8 +227,10 @@ export default function BatchExtractor() {
           parent_report_id: report.parentReportId || '',
           folder_path: report.rule,
           xml_file_name: report.rule.split(' > ')[0] || 'unknown.xml',
+          equivalence_filter_setting: equivalenceFilter, // Use current setting
           parsed_at: new Date().toISOString(),
-        });
+        };
+        normalizedData.reports.push(reportRow);
 
         // Process each ValueSet in the report
         let completedValueSets = 0;

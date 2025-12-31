@@ -14,6 +14,7 @@ export const normalizedTableColumns = {
     { key: 'parent_report_id', label: 'parent_report_id' },
     { key: 'folder_path', label: 'folder_path' },
     { key: 'xml_file_name', label: 'xml_file_name' },
+    { key: 'equivalence_filter_setting', label: 'equivalence_filter_setting' },
     { key: 'parsed_at', label: 'parsed_at' },
   ],
   valuesets: [
