@@ -232,7 +232,7 @@ export default function FolderTreeNavigation() {
       <Separator />
 
       <div className="text-xs text-muted-foreground px-2">
-        {parsedData.reports.length} searches
+        {parsedData?.reports.length ?? 0} searches
       </div>
 
       <div className="space-y-0.5 overflow-y-auto pr-2">
