@@ -298,7 +298,7 @@ export default function ExploreMode() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
-                  <p className="text-sm text-muted-foreground max-w-md">
+                  <p className="text-sm text-muted-foreground max-w-xl">
                     This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
                   </p>
                 </div>
