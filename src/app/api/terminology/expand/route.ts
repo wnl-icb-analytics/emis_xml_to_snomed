@@ -362,14 +362,46 @@ async function expandSingleValueSet(
   // Generate deterministic ID based on report ID, valueset index, and valueset hash
   const valueSetId = generateValueSetId(featureId, valueSetHash, mapping.valueSetIndex);
 
-  // Build formatted ECL expression for display (includes all codes for this ValueSet)
-  // Convert vsValues to EmisValue format for ECL builder
-  const eclValues = vsValues.map((v: ValueWithMetadata) => ({
+  // Build formatted ECL expression for display (only includes successfully mapped codes)
+  // Filter to only include codes that:
+  // 1. Have a ConceptMap translation, OR
+  // 2. Are refsets (found in RF2 or queried via ECL), OR
+  // 3. Are already SNOMED codes (codeSystem === 'SNOMED_CONCEPT'), OR
+  // 4. Are SCT_CONST codes that successfully expanded to UK Products
+  // 
+  // Exclude codes that don't have translations and aren't refsets/SNOMED/SCT_CONST
+  // (these are unmapped XML codes that shouldn't appear in the ECL)
+  const successfullyMappedCodes = vsValues.filter((v: ValueWithMetadata) => {
+    // Check if code has a translation
+    const hasTranslation = !!v.translatedSnomedCode;
+    
+    // Check if code is a refset (either marked as refset or found in RF2)
+    const isRefsetCode = v.isRefset || rf2RefsetIds.includes(v.code);
+    
+    // Check if code is already SNOMED (doesn't need translation)
+    const isAlreadySnomed = v.codeSystem === 'SNOMED_CONCEPT';
+    
+    // Check if SCT_CONST code successfully expanded to UK Products
+    const isSuccessfulSctConst = v.codeSystem === 'SCT_CONST' && successfullyExpandedSctConstCodes.has(v.originalCode);
+    
+    // Include if any of the above conditions are true
+    // This ensures we only include codes that have been successfully mapped/translated
+    return hasTranslation || isRefsetCode || isAlreadySnomed || isSuccessfulSctConst;
+  });
+  
+  // Convert successfully mapped codes to EmisValue format for ECL builder
+  const eclValues = successfullyMappedCodes.map((v: ValueWithMetadata) => ({
     code: v.code,
     displayName: v.displayName,
     includeChildren: v.includeChildren,
     isRefset: v.isRefset,
   }));
+  
+  // Debug: log filtered codes
+  const filteredOutCount = vsValues.length - successfullyMappedCodes.length;
+  if (filteredOutCount > 0) {
+    console.log(`[expandSingleValueSet] Filtered out ${filteredOutCount} unmapped code(s) from ECL expression for ValueSet ${mapping.valueSetIndex + 1} (${successfullyMappedCodes.length} codes included)`);
+  }
   
   // Debug: log before building ECL
   if (vsExcludedCodes.length > 0) {
