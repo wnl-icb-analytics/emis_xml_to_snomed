@@ -131,7 +131,7 @@ export default function BatchExtractor() {
   }, [selectedReports]);
 
   // Timer effect - use refs to avoid recreating interval on every state change
-  // Only updates elapsed time every second; remaining time is calculated when valuesets complete
+  // Updates elapsed time and decrements remaining time every second
   useEffect(() => {
     if (status !== 'processing' || !startTimeRef.current) {
       return;
@@ -143,8 +143,8 @@ export default function BatchExtractor() {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedTime(elapsed);
 
-      // Don't recalculate remaining time here - it's updated when valuesets complete
-      // This prevents erratic countdown caused by recalculating every second
+      // Decrement remaining time by 1 second (it's recalculated when valuesets complete)
+      setRemainingTime(prev => prev !== null && prev > 0 ? prev - 1 : prev);
     }, 1000);
 
     return () => clearInterval(interval);
