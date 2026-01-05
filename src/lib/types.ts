@@ -149,6 +149,13 @@ export interface ValueSetGroup {
     translatedTo?: string; // SNOMED code after ConceptMap translation
     translatedToDisplay?: string; // Display name of translated SNOMED code
   }>;
+  // Exception (excluded codes) metadata with translation tracking
+  exceptions?: Array<{
+    originalExcludedCode: string;
+    translatedToSnomedCode: string | null;
+    includedInEcl: boolean;
+    translationError: string | null;
+  }>;
 }
 
 export interface SnomedConcept {
