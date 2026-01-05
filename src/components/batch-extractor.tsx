@@ -52,8 +52,6 @@ export default function BatchExtractor() {
   const [totalTime, setTotalTime] = useState<number | null>(null);
   const [isCheckingXml, setIsCheckingXml] = useState(true);
   const [isDataViewerOpen, setIsDataViewerOpen] = useState(false);
-  const valuesetTimesRef = useRef<number[]>([]);
-  const lastRemainingTimeCalcRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const processingStatusRef = useRef<ProcessingStatus | null>(null);
   const selectedReportsRef = useRef<EmisReport[]>([]);
@@ -133,6 +131,7 @@ export default function BatchExtractor() {
   }, [selectedReports]);
 
   // Timer effect - use refs to avoid recreating interval on every state change
+  // Only updates elapsed time every second; remaining time is calculated when valuesets complete
   useEffect(() => {
     if (status !== 'processing' || !startTimeRef.current) {
       return;
@@ -140,33 +139,12 @@ export default function BatchExtractor() {
 
     const interval = setInterval(() => {
       if (!startTimeRef.current) return;
-      
+
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedTime(elapsed);
 
-      // Calculate remaining time based on average time per valueset
-      const currentProcessingStatus = processingStatusRef.current;
-      const currentSelectedReports = selectedReportsRef.current;
-      
-      if (currentProcessingStatus && valuesetTimesRef.current.length > 0) {
-        const avgTimePerValueSet = valuesetTimesRef.current.reduce((a, b) => a + b, 0) / valuesetTimesRef.current.length;
-        const totalValueSets = currentSelectedReports.reduce((sum, r) => sum + r.valueSets.length, 0);
-        
-        // Calculate completed valuesets: all in previous reports + current valueset (minus 1 since we're currently processing it)
-        let completedValueSets = 0;
-        for (let i = 0; i < currentProcessingStatus.currentReport - 1; i++) {
-          completedValueSets += currentSelectedReports[i]?.valueSets.length || 0;
-        }
-        completedValueSets += currentProcessingStatus.currentValueSet - 1; // -1 because we're currently processing this one
-        
-        const remainingValueSets = totalValueSets - completedValueSets;
-        if (remainingValueSets > 0) {
-          const estimatedSecondsRemaining = Math.ceil(remainingValueSets * avgTimePerValueSet);
-          setRemainingTime(Math.max(0, estimatedSecondsRemaining));
-        } else {
-          setRemainingTime(0);
-        }
-      }
+      // Don't recalculate remaining time here - it's updated when valuesets complete
+      // This prevents erratic countdown caused by recalculating every second
     }, 1000);
 
     return () => clearInterval(interval);
@@ -187,8 +165,6 @@ export default function BatchExtractor() {
     setElapsedTime(0);
     setRemainingTime(null);
     setTotalTime(null);
-    valuesetTimesRef.current = [];
-    lastRemainingTimeCalcRef.current = null;
 
     const normalizedData: NormalizedTables = {
       reports: [],
@@ -372,12 +348,31 @@ export default function BatchExtractor() {
             }
           }
 
-          // Track time for this valueset
-          const valueSetTime = (Date.now() - valueSetStartTime) / 1000; // in seconds
-          valuesetTimesRef.current.push(valueSetTime);
-          // Keep only last 50 valuesets for rolling average
-          if (valuesetTimesRef.current.length > 50) {
-            valuesetTimesRef.current.shift();
+          // Calculate remaining time based on overall average (total elapsed / completed valuesets)
+          // This is more stable than rolling average and accounts for all valuesets, not just recent ones
+          if (startTimeRef.current) {
+            const elapsedSeconds = (Date.now() - startTimeRef.current) / 1000;
+            const totalValueSetsCount = selectedReports.reduce((sum, r) => sum + r.valueSets.length, 0);
+
+            // Calculate how many valuesets we've completed so far
+            let completedValueSetsCount = 0;
+            for (let i = 0; i < completedReports - 1; i++) {
+              completedValueSetsCount += selectedReports[i]?.valueSets.length || 0;
+            }
+            completedValueSetsCount += completedValueSets; // Add completed valuesets in current report
+
+            if (completedValueSetsCount > 0) {
+              // Average time per valueset = total elapsed time / completed valuesets
+              const avgTimePerValueSet = elapsedSeconds / completedValueSetsCount;
+              const remainingValueSets = totalValueSetsCount - completedValueSetsCount;
+
+              if (remainingValueSets > 0) {
+                const estimatedSecondsRemaining = Math.ceil(remainingValueSets * avgTimePerValueSet);
+                setRemainingTime(Math.max(0, estimatedSecondsRemaining));
+              } else {
+                setRemainingTime(0);
+              }
+            }
           }
 
           // Update progress
@@ -418,8 +413,6 @@ export default function BatchExtractor() {
         setElapsedTime(0);
         setRemainingTime(null);
       }
-      valuesetTimesRef.current = [];
-      lastRemainingTimeCalcRef.current = null;
     }
   };
 
@@ -433,8 +426,6 @@ export default function BatchExtractor() {
     setStartTime(null);
     setElapsedTime(0);
     setRemainingTime(null);
-    valuesetTimesRef.current = [];
-    lastRemainingTimeCalcRef.current = null;
   };
 
   const handleDownloadZIP = async () => {
