@@ -483,9 +483,9 @@ async function expandSingleValueSet(
       translatedSnomedCode = historicalMap.get(snomedCode) || snomedCode;
 
       // Check if this code is valid SNOMED format (6-18 digits, numeric)
-      const isValidSnomed = /^\d+$/.test(translatedSnomedCode) &&
-                           translatedSnomedCode.length >= 6 &&
-                           translatedSnomedCode.length <= 18;
+      const isValidSnomed = /^\d+$/.test(translatedSnomedCode!) &&
+                           translatedSnomedCode!.length >= 6 &&
+                           translatedSnomedCode!.length <= 18;
 
       if (!isValidSnomed) {
         translationError = `Invalid SNOMED code format: ${translatedSnomedCode}`;
