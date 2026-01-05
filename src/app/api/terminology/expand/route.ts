@@ -639,22 +639,23 @@ export async function POST(request: NextRequest) {
 
       // CRITICAL: Filter to only include codes that have been successfully translated/resolved
       // This prevents sending EMISINTERNAL codes or untranslated codes to the terminology server
-      const filterLegacyValues = (values: Array<{code: string; originalCode: string; displayName: string; includeChildren: boolean; isRefset: boolean;}>) => {
-        return values.filter((v) => {
-          const hasTranslation = codeToSnomedMap.has(v.originalCode);
+      const filterLegacyValues = (values: any[]) => {
+        return values.filter((v: any) => {
+          const originalCode = v.originalCode || v.code;
+          const hasTranslation = codeToSnomedMap.has(originalCode);
           const isRefsetCode = v.isRefset || rf2RefsetIds.includes(v.code);
           const shouldInclude = hasTranslation || isRefsetCode;
 
           if (!shouldInclude) {
-            console.log(`  Filtering out unmapped code from ECL (legacy path): ${v.originalCode} (code after resolution: ${v.code})`);
+            console.log(`  Filtering out unmapped code from ECL (legacy path): ${originalCode} (code after resolution: ${v.code})`);
           }
 
           return shouldInclude;
         });
       };
 
-      const filteredNonRefsets = filterLegacyValues(nonRefsetValues);
-      const filteredRefsetsToQuery = filterLegacyValues(refsetsToQueryViaEcl);
+      const filteredNonRefsets = filterLegacyValues(nonRefsetValues as any);
+      const filteredRefsetsToQuery = filterLegacyValues(refsetsToQueryViaEcl as any);
       const valuesForEcl = [...filteredNonRefsets, ...filteredRefsetsToQuery];
 
       console.log(`  -> Filtered to ${valuesForEcl.length} successfully mapped codes for ECL query (legacy path)`);
