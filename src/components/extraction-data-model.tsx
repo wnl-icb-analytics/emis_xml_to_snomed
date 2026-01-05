@@ -16,13 +16,13 @@ export function ExtractionDataModel({ className }: { className?: string }) {
       name: 'reports',
       primaryKey: 'report_id',
       foreignKeys: [],
-      columns: ['report_id', 'report_name', 'search_name', 'folder_path', 'xml_file_name', 'parsed_at'],
+      columns: ['report_id', 'report_xml_id', 'report_name', 'search_name', 'description', 'parent_type', 'parent_report_id', 'folder_path', 'xml_file_name', 'equivalence_filter_setting', 'parsed_at'],
     },
     {
       name: 'valuesets',
       primaryKey: 'valueset_id',
       foreignKeys: [{ column: 'report_id', references: 'reports.report_id' }],
-      columns: ['valueset_id', 'report_id', 'valueset_index', 'valueset_hash', 'valueset_friendly_name', 'code_system', 'expansion_error', 'expanded_at'],
+      columns: ['valueset_id', 'report_id', 'valueset_index', 'valueset_hash', 'valueset_friendly_name', 'code_system', 'ecl_expression', 'expansion_error', 'expanded_at'],
     },
     {
       name: 'original_codes',
@@ -34,7 +34,7 @@ export function ExtractionDataModel({ className }: { className?: string }) {
       name: 'expanded_concepts',
       primaryKey: 'concept_id',
       foreignKeys: [{ column: 'valueset_id', references: 'valuesets.valueset_id' }],
-      columns: ['concept_id', 'valueset_id', 'snomed_code', 'display', 'source', 'exclude_children', 'is_refset'],
+      columns: ['concept_id', 'valueset_id', 'snomed_code', 'display', 'source', 'exclude_children'],
     },
     {
       name: 'failed_codes',
@@ -46,7 +46,7 @@ export function ExtractionDataModel({ className }: { className?: string }) {
       name: 'exceptions',
       primaryKey: 'exception_id',
       foreignKeys: [{ column: 'valueset_id', references: 'valuesets.valueset_id' }],
-      columns: ['exception_id', 'valueset_id', 'excluded_code'],
+      columns: ['exception_id', 'valueset_id', 'original_excluded_code', 'translated_to_snomed_code', 'included_in_ecl', 'translation_error'],
     },
   ];
 

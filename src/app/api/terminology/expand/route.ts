@@ -462,11 +462,55 @@ async function expandSingleValueSet(
   }
   
   const eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap);
-  
+
   // Debug: log the generated ECL
   if (vsExcludedCodes.length > 0) {
     console.log(`[expandSingleValueSet] Generated ECL expression for ValueSet ${mapping.valueSetIndex + 1}:`, eclExpression.substring(0, 200));
   }
+
+  // Build exceptions metadata with translation information and error tracking
+  const exceptionsMetadata = vsOriginalExcludedCodes.map((originalCode: string) => {
+    const translatedCode = codeToSnomedMap.get(originalCode);
+    const hasTranslation = !!translatedCode;
+
+    let translatedSnomedCode: string | undefined;
+    let translationError: string | undefined;
+    let includedInEcl = false;
+
+    if (hasTranslation) {
+      // Successfully translated via ConceptMap
+      const snomedCode = translatedCode!.code;
+      translatedSnomedCode = historicalMap.get(snomedCode) || snomedCode;
+
+      // Check if this code is valid SNOMED format (6-18 digits, numeric)
+      const isValidSnomed = /^\d+$/.test(translatedSnomedCode) &&
+                           translatedSnomedCode.length >= 6 &&
+                           translatedSnomedCode.length <= 18;
+
+      if (!isValidSnomed) {
+        translationError = `Invalid SNOMED code format: ${translatedSnomedCode}`;
+        includedInEcl = false;
+      } else if (vsExcludedCodes.includes(translatedSnomedCode)) {
+        // Successfully translated, validated, and included in ECL MINUS clause
+        includedInEcl = true;
+      } else {
+        // Translated but not included (filtered out for some reason)
+        translationError = 'Filtered out after translation';
+        includedInEcl = false;
+      }
+    } else {
+      // No ConceptMap translation found
+      translationError = 'No translation found from ConceptMap';
+      includedInEcl = false;
+    }
+
+    return {
+      originalExcludedCode: originalCode,
+      translatedToSnomedCode: translatedSnomedCode || null,
+      includedInEcl,
+      translationError: translationError || null,
+    };
+  });
 
   return {
     valueSetId,
@@ -482,6 +526,7 @@ async function expandSingleValueSet(
     failedCodes: failedCodes.length > 0 ? failedCodes : undefined,
     refsets: refsetsMetadata.length > 0 ? refsetsMetadata : undefined,
     originalCodes: originalCodesMetadata,
+    exceptions: exceptionsMetadata.length > 0 ? exceptionsMetadata : undefined,
   };
 }
 

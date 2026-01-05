@@ -323,12 +323,15 @@ export default function BatchExtractor() {
                   });
                 });
 
-                // Add exceptions
-                vs.exceptions.forEach((exception, excIdx) => {
+                // Add exceptions (using data from API response with translation info)
+                group.exceptions?.forEach((exception: any, excIdx: number) => {
                   normalizedData.exceptions.push({
                     exception_id: `${group.valueSetId}-exc${excIdx}`,
                     valueset_id: group.valueSetId,
-                    excluded_code: exception.code,
+                    original_excluded_code: exception.originalExcludedCode,
+                    translated_to_snomed_code: exception.translatedToSnomedCode || '',
+                    included_in_ecl: exception.includedInEcl || false,
+                    translation_error: exception.translationError || '',
                   });
                 });
               }

@@ -8,6 +8,7 @@ This document outlines the normalised data model for storing valueset data from 
 ```
 reports (1) ──< (many) valuesets (1) ──< (many) original_codes
                                               └──< (many) expanded_concepts
+                                              └──< (many) failed_codes
                                               └──< (many) exceptions
 ```
 
@@ -65,18 +66,32 @@ Stores concepts returned by the terminology server.
 | valueset_id | VARCHAR | Reference to parent valueset | FK → valuesets |
 | snomed_code | VARCHAR | SNOMED CT concept code | |
 | display | VARCHAR | Display name from terminology server | |
-| source | VARCHAR | 'original' or 'expanded' | |
+| source | VARCHAR | Source of expansion: 'rf2_file' or 'terminology_server' | |
 | exclude_children | BOOLEAN | True if includeChildren was false for parent | |
-| is_refset | BOOLEAN | Whether this is a refset ID | |
 
-### 5. exceptions
-Stores excluded codes for each valueset.
+### 5. failed_codes
+Stores codes that failed to translate or expand.
+
+| Column | Type | Description | Constraints |
+|--------|------|-------------|-------------|
+| failed_code_id | VARCHAR | Unique identifier | PK |
+| valueset_id | VARCHAR | Reference to parent valueset | FK → valuesets |
+| original_code | VARCHAR | Original code from XML that failed | |
+| display_name | VARCHAR | Display name from XML | |
+| code_system | VARCHAR | Code system (e.g., "EMISINTERNAL", "EMIS") | |
+| reason | VARCHAR | Reason for failure | |
+
+### 6. exceptions
+Stores excluded codes for each valueset with translation tracking.
 
 | Column | Type | Description | Constraints |
 |--------|------|-------------|-------------|
 | exception_id | VARCHAR | Unique identifier | PK |
 | valueset_id | VARCHAR | Reference to parent valueset | FK → valuesets |
-| excluded_code | VARCHAR | Code to exclude from expansion | |
+| original_excluded_code | VARCHAR | Original excluded code from XML | |
+| translated_to_snomed_code | VARCHAR | Translated SNOMED code if successful | NULLABLE |
+| included_in_ecl | BOOLEAN | Whether code was included in ECL MINUS clause | |
+| translation_error | VARCHAR | Error message if translation failed | NULLABLE |
 
 ## Indexes
 
@@ -84,6 +99,7 @@ Stores excluded codes for each valueset.
 - `idx_original_codes_valueset_id` on `original_codes(valueset_id)`
 - `idx_expanded_concepts_valueset_id` on `expanded_concepts(valueset_id)`
 - `idx_expanded_concepts_snomed_code` on `expanded_concepts(snomed_code)`
+- `idx_failed_codes_valueset_id` on `failed_codes(valueset_id)`
 - `idx_exceptions_valueset_id` on `exceptions(valueset_id)`
 - `idx_valuesets_hash` on `valuesets(valueset_hash)` (for duplicate detection)
 
@@ -133,4 +149,5 @@ Stores excluded codes for each valueset.
 - Show normalised tables below valueset display
 - Toggle between "Expanded View" and "Normalised View"
 - Export individual tables or all tables
+
 

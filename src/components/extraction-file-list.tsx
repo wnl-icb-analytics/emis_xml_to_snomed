@@ -7,11 +7,11 @@ interface ExtractionFileListProps {
 export function ExtractionFileList({ className }: ExtractionFileListProps) {
   const files = [
     { name: 'reports.csv', description: 'Report metadata with deterministic IDs' },
-    { name: 'valuesets.csv', description: 'ValueSets with hash that can support deduplication' },
-    { name: 'original_codes.csv', description: 'Original EMIS codes from XML' },
-    { name: 'expanded_concepts.csv', description: 'All expanded SNOMED concepts' },
-    { name: 'failed_codes.csv', description: 'Codes that failed to translate/expand' },
-    { name: 'exceptions.csv', description: 'Excluded codes' },
+    { name: 'valuesets.csv', description: 'ValueSets with hash for deduplication and ECL expressions' },
+    { name: 'original_codes.csv', description: 'Original EMIS codes from XML with ConceptMap translations' },
+    { name: 'expanded_concepts.csv', description: 'Expanded SNOMED concepts from terminology server and RF2' },
+    { name: 'failed_codes.csv', description: 'Codes that failed to translate or expand with error reasons' },
+    { name: 'exceptions.csv', description: 'Excluded codes with translation status and ECL inclusion tracking' },
   ];
 
   return (

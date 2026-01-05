@@ -46,7 +46,6 @@ export const normalizedTableColumns = {
     { key: 'display', label: 'display' },
     { key: 'source', label: 'source' },
     { key: 'exclude_children', label: 'exclude_children' },
-    { key: 'is_descendant', label: 'is_descendant' },
   ],
   failedCodes: [
     { key: 'failed_code_id', label: 'failed_code_id' },
@@ -59,7 +58,10 @@ export const normalizedTableColumns = {
   exceptions: [
     { key: 'exception_id', label: 'exception_id' },
     { key: 'valueset_id', label: 'valueset_id' },
-    { key: 'excluded_code', label: 'excluded_code' },
+    { key: 'original_excluded_code', label: 'original_excluded_code' },
+    { key: 'translated_to_snomed_code', label: 'translated_to_snomed_code' },
+    { key: 'included_in_ecl', label: 'included_in_ecl' },
+    { key: 'translation_error', label: 'translation_error' },
   ],
 } as const;
 
