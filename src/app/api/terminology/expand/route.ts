@@ -57,17 +57,32 @@ async function expandSingleValueSet(
   }
   
   // Translate and resolve excluded codes (same process as parent codes)
-  const vsExcludedCodes = vsOriginalExcludedCodes.map((code: string) => {
-    const translatedCode = codeToSnomedMap.get(code);
-    const snomedCode = translatedCode?.code || code;
-    return historicalMap.get(snomedCode) || snomedCode;
-  });
-  
+  // CRITICAL: Only include excluded codes that were successfully translated
+  const vsExcludedCodes = vsOriginalExcludedCodes
+    .filter((code: string) => {
+      const translatedCode = codeToSnomedMap.get(code);
+      const hasTranslation = !!translatedCode;
+
+      if (!hasTranslation) {
+        console.log(`[expandSingleValueSet] Filtering out unmapped excluded code: ${code} (no ConceptMap translation)`);
+      }
+
+      return hasTranslation;
+    })
+    .map((code: string) => {
+      const translatedCode = codeToSnomedMap.get(code);
+      const snomedCode = translatedCode!.code; // Safe to use ! because we filtered above
+      return historicalMap.get(snomedCode) || snomedCode;
+    });
+
   // Debug: log translated/resolved excluded codes
-  if (vsExcludedCodes.length > 0) {
-    console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1} has ${vsExcludedCodes.length} translated/resolved excluded codes:`, vsExcludedCodes.slice(0, 5));
+  if (vsOriginalExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] ValueSet ${mapping.valueSetIndex + 1}: ${vsExcludedCodes.length}/${vsOriginalExcludedCodes.length} excluded codes successfully translated`);
   }
-  
+  if (vsExcludedCodes.length > 0) {
+    console.log(`[expandSingleValueSet] Translated excluded codes:`, vsExcludedCodes.slice(0, 5));
+  }
+
   const vsExcludedSet = new Set(vsExcludedCodes);
 
   // Build values array for this specific ValueSet
@@ -196,8 +211,46 @@ async function expandSingleValueSet(
   // For refsets not found in RF2, fall back to ECL queries
   const refsetsToQueryViaEcl = allRefsetValues.filter(v => refsetsNotFoundInRf2.includes(v.code));
 
-  // Build ECL query for non-refsets and refsets not found in RF2
-  const valuesForEcl = [...allNonRefsetValues, ...refsetsToQueryViaEcl];
+  // CRITICAL: Filter to only include codes that have been successfully translated/resolved
+  // This prevents sending EMISINTERNAL codes (like "A", "M", "F") or untranslated codes to the terminology server
+  // Only include codes that:
+  // 1. Have a ConceptMap translation (successfully mapped from EMIS to SNOMED), OR
+  // 2. Are refsets (found in RF2 or marked as refsets), OR
+  // 3. Are already SNOMED codes (codeSystem === 'SNOMED_CONCEPT')
+  const filterToSuccessfullyMappedCodes = (values: EmisValue[]): EmisValue[] => {
+    return values.filter((v) => {
+      // Check if this is a ValueWithMetadata (has originalCode property)
+      const vWithMeta = v as ValueWithMetadata;
+      const originalCode = vWithMeta.originalCode || v.code;
+
+      // Check if code has a ConceptMap translation
+      const hasTranslation = codeToSnomedMap.has(originalCode);
+
+      // Check if code is a refset (either marked as refset or found in RF2)
+      const isRefsetCode = v.isRefset || rf2RefsetIds.includes(v.code);
+
+      // Check if code is already SNOMED (doesn't need translation)
+      const isAlreadySnomed = vWithMeta.codeSystem === 'SNOMED_CONCEPT';
+
+      // Include if any of the above conditions are true
+      const shouldInclude = hasTranslation || isRefsetCode || isAlreadySnomed;
+
+      if (!shouldInclude) {
+        console.log(`  Filtering out unmapped code from ECL: ${originalCode} (codeSystem: ${vWithMeta.codeSystem}, code after resolution: ${v.code})`);
+      }
+
+      return shouldInclude;
+    });
+  };
+
+  // Apply filtering to both non-refsets and refsets
+  const filteredNonRefsetValues = filterToSuccessfullyMappedCodes(allNonRefsetValues);
+  const filteredRefsetsToQuery = filterToSuccessfullyMappedCodes(refsetsToQueryViaEcl);
+
+  // Build ECL query for non-refsets and refsets not found in RF2 (only successfully mapped codes)
+  const valuesForEcl = [...filteredNonRefsetValues, ...filteredRefsetsToQuery];
+
+  console.log(`  -> Filtered to ${valuesForEcl.length} successfully mapped codes for ECL query (${allNonRefsetValues.length + refsetsToQueryViaEcl.length - valuesForEcl.length} codes filtered out)`);
 
   // Expand via terminology server if needed - use batching to avoid 414 Request-URI Too Large errors
   // Each ECL code with << operator adds ~20-30 characters to the URL
@@ -583,7 +636,28 @@ export async function POST(request: NextRequest) {
       
       // For refsets not found in RF2, add them back to values for ECL query
       const refsetsToQueryViaEcl = refsetValues.filter(v => refsetsNotFoundInRf2.includes(v.code));
-      const valuesForEcl = [...nonRefsetValues, ...refsetsToQueryViaEcl];
+
+      // CRITICAL: Filter to only include codes that have been successfully translated/resolved
+      // This prevents sending EMISINTERNAL codes or untranslated codes to the terminology server
+      const filterLegacyValues = (values: Array<{code: string; originalCode: string; displayName: string; includeChildren: boolean; isRefset: boolean;}>) => {
+        return values.filter((v) => {
+          const hasTranslation = codeToSnomedMap.has(v.originalCode);
+          const isRefsetCode = v.isRefset || rf2RefsetIds.includes(v.code);
+          const shouldInclude = hasTranslation || isRefsetCode;
+
+          if (!shouldInclude) {
+            console.log(`  Filtering out unmapped code from ECL (legacy path): ${v.originalCode} (code after resolution: ${v.code})`);
+          }
+
+          return shouldInclude;
+        });
+      };
+
+      const filteredNonRefsets = filterLegacyValues(nonRefsetValues);
+      const filteredRefsetsToQuery = filterLegacyValues(refsetsToQueryViaEcl);
+      const valuesForEcl = [...filteredNonRefsets, ...filteredRefsetsToQuery];
+
+      console.log(`  -> Filtered to ${valuesForEcl.length} successfully mapped codes for ECL query (legacy path)`);
 
       if (valuesForEcl.length > BATCH_SIZE) {
         for (let i = 0; i < valuesForEcl.length; i += BATCH_SIZE) {

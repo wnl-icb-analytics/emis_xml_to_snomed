@@ -91,13 +91,30 @@ export function buildBatchedEclQuery(
 
   // If no parts, return empty string (will be handled by caller)
   if (!eclExpression || eclExpression.trim() === '') {
+    // Don't create MINUS-only expressions - you can't exclude from nothing
+    if (excludedCodes.length > 0) {
+      console.warn('Cannot create ECL expression with only exclusions (no valid codes to exclude from)');
+    }
     return '';
   }
 
-  // Add exclusions if present
+  // Add exclusions if present (validate excluded codes first)
   if (excludedCodes.length > 0) {
-    const exclusions = excludedCodes.map((code) => `<< ${code}`).join(' OR ');
-    eclExpression = `(${eclExpression}) MINUS (${exclusions})`;
+    // Filter out invalid excluded codes (same validation as parent codes)
+    const validExcludedCodes = excludedCodes.filter((code) => {
+      if (!isValidSnomedCode(code)) {
+        console.warn('Filtering out invalid excluded SNOMED code:', code);
+        return false;
+      }
+      return true;
+    });
+
+    if (validExcludedCodes.length > 0) {
+      const exclusions = validExcludedCodes.map((code) => `<< ${code}`).join(' OR ');
+      eclExpression = `(${eclExpression}) MINUS (${exclusions})`;
+    } else {
+      console.log(`All ${excludedCodes.length} excluded codes were invalid and filtered out`);
+    }
   }
 
   return eclExpression;
