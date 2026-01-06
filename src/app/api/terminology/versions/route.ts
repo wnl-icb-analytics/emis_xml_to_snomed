@@ -4,8 +4,6 @@ import { getAccessToken } from '@/lib/oauth-client';
 import { getRF2VersionInfo } from '@/lib/rf2-version';
 import { getLatestRF2Release, isNewerThanLocal } from '@/lib/trud-client';
 
-export const dynamic = 'force-dynamic';
-
 /**
  * GET /api/terminology/versions
  * Returns the current ConceptMap and RF2 versions being used by the system

@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { getAllConceptMapVersions, EMIS_TO_SNOMED_CANONICAL_URL, EMIS_TO_SNOMED_FALLBACK_CANONICAL_URL } from '@/lib/concept-map-resolver';
 import { getAccessToken } from '@/lib/oauth-client';
 
-export const dynamic = 'force-dynamic';
-
 /**
  * GET /api/terminology/concept-map-versions?type=primary|fallback
  * Returns all available versions of EMIS→SNOMED ConceptMaps
