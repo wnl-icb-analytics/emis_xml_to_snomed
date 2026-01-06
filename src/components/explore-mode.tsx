@@ -441,6 +441,7 @@ export default function ExploreMode() {
                 isExpanding={isExpanding}
                 totalValueSets={selectedReport?.valueSets.length}
                 onCancel={handleCancel}
+                showBnfHints={true}
               />
             )}
           </>

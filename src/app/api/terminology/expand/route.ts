@@ -119,13 +119,18 @@ async function expandSingleValueSet(
     console.log(`Found ${sctConstCodes.length} SCT_CONST codes, expanding UK Products...`);
 
     for (const sctConstValue of sctConstCodes) {
-      // Use the translated SNOMED code from ConceptMap, not the original XML code
-      // If no translation exists, fall back to the resolved code
-      const substanceCode = sctConstValue.translatedSnomedCode || sctConstValue.code;
-
+      // Skip SCT_CONST codes that have no translation - cannot expand UK Products
       if (!sctConstValue.translatedSnomedCode) {
-        console.warn(`  SCT_CONST code ${sctConstValue.originalCode} has no ConceptMap translation, using resolved code ${substanceCode}`);
+        console.warn(`  ⚠️  SCT_CONST code ${sctConstValue.originalCode} (${sctConstValue.displayName}) has no ConceptMap translation, skipping UK Product expansion`);
+        sctConstCodesWithNoProducts.set(sctConstValue.originalCode, {
+          substanceCode: sctConstValue.originalCode,
+          displayName: sctConstValue.displayName || sctConstValue.originalCode,
+        });
+        continue; // Skip to next code
       }
+
+      // Use the translated SNOMED code from ConceptMap
+      const substanceCode = sctConstValue.translatedSnomedCode;
 
       try {
         // Two-step approach: First find modifications, then find UK Products
@@ -453,6 +458,18 @@ async function expandSingleValueSet(
       // Provide clearer error messages for SCT_CONST codes that returned 0 products
       if (oc.codeSystem === 'SCT_CONST' && sctConstCodesWithNoProducts.has(oc.originalCode)) {
         const noProductsInfo = sctConstCodesWithNoProducts.get(oc.originalCode)!;
+        
+        // Check if this failed because there was no translation
+        if (noProductsInfo.substanceCode === oc.originalCode) {
+          return {
+            originalCode: oc.originalCode,
+            displayName: oc.displayName,
+            codeSystem: oc.codeSystem,
+            reason: `No ConceptMap translation available for this code. Cannot expand UK Products without a valid SNOMED CT substance code.`,
+          };
+        }
+        
+        // Failed after successful translation (no products found)
         return {
           originalCode: oc.originalCode,
           displayName: oc.displayName,
@@ -887,5 +904,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const runtime = 'nodejs';
 export const maxDuration = 60;

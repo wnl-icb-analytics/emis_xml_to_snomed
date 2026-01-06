@@ -33,7 +33,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-export const runtime = 'nodejs';
 export const maxDuration = 30;
 // Body size limit is configured in next.config.ts via middlewareClientMaxBodySize

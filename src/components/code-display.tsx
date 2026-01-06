@@ -16,6 +16,7 @@ import {
 import { Copy, Check, Download, ChevronDown, ChevronRight, CheckCircle2, XCircle, Loader2, ChevronUp } from 'lucide-react';
 import { ExpandedCodeSet, EmisReport } from '@/lib/types';
 import NormalisedDataView from './normalised-data-view';
+import { BnfHint } from './bnf-hint';
 
 interface CodeDisplayProps {
   expandedCodes: ExpandedCodeSet;
@@ -23,6 +24,7 @@ interface CodeDisplayProps {
   isExpanding?: boolean;
   totalValueSets?: number;
   onCancel?: () => void;
+  showBnfHints?: boolean; // Only show BNF hints in explore mode
 }
 
 const getCodeSystemBadgeClass = (codeSystem?: string): string => {
@@ -52,7 +54,7 @@ const getCodeSystemBadgeClass = (codeSystem?: string): string => {
   return 'text-xs bg-gray-50 text-gray-700 border-gray-200';
 };
 
-export default function CodeDisplay({ expandedCodes, report, isExpanding, totalValueSets, onCancel }: CodeDisplayProps) {
+export default function CodeDisplay({ expandedCodes, report, isExpanding, totalValueSets, onCancel, showBnfHints = false }: CodeDisplayProps) {
   const [copiedButton, setCopiedButton] = useState<number | 'all' | null>(null);
   const [expandedValueSets, setExpandedValueSets] = useState<Set<number>>(new Set());
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
@@ -682,7 +684,14 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                     {group.failedCodes.map((failed, i) => (
                                       <TableRow key={i}>
                                         <TableCell className="font-mono text-xs">{failed.originalCode}</TableCell>
-                                        <TableCell className="text-sm">{failed.displayName}</TableCell>
+                                        <TableCell className="text-sm">
+                                          <div>
+                                            {failed.displayName}
+                                            {showBnfHints && (
+                                              <BnfHint displayName={failed.displayName} codeSystem={failed.codeSystem} />
+                                            )}
+                                          </div>
+                                        </TableCell>
                                         <TableCell>
                                           <Badge variant="outline" className={getCodeSystemBadgeClass(failed.codeSystem)}>
                                             {failed.codeSystem}
