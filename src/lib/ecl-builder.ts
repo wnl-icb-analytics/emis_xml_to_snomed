@@ -140,13 +140,32 @@ export function estimateEclComplexity(eclExpression: string): number {
 
 /**
  * Builds an ECL query to expand UK Products for a given substance code
- * Format: << (< 10363601000001109 |UK Product| : 762949000 |Has precise active ingredient| = << {substanceCode})
+ * Format: << (< 10363601000001109 : 762949000 = << {substanceCode})
  */
 export function buildUkProductEcl(substanceCode: string): string {
   const UK_PRODUCT_CONCEPT = '10363601000001109';
   const HAS_PRECISE_ACTIVE_INGREDIENT = '762949000';
   
-  return `<< (< ${UK_PRODUCT_CONCEPT} |UK Product| : ${HAS_PRECISE_ACTIVE_INGREDIENT} |Has precise active ingredient| = << ${substanceCode})`;
+  return `<< (< ${UK_PRODUCT_CONCEPT} : ${HAS_PRECISE_ACTIVE_INGREDIENT} = << ${substanceCode})`;
+}
+
+/**
+ * Builds an ECL query to find all substances that are modifications of a given substance
+ * Uses the "Is modification of" relationship (738774007)
+ * 
+ * Note: ECL syntax for finding concepts with a specific relationship requires a concept to refine.
+ * We use the Substance concept (105590001) and refine it by the "Is modification of" relationship.
+ * Format: << 105590001 : 738774007 = << {substanceCode}
+ * 
+ * This returns substances that have the base substance as their "Is modification of" target
+ */
+export function buildModificationOfEcl(substanceCode: string): string {
+  const SUBSTANCE_CONCEPT = '105590001'; // |Substance|
+  const IS_MODIFICATION_OF = '738774007';
+  
+  // Find all substances that are modifications of the base substance
+  // Refine the Substance concept by the "Is modification of" relationship
+  return `<< ${SUBSTANCE_CONCEPT} : ${IS_MODIFICATION_OF} = << ${substanceCode}`;
 }
 
 /**

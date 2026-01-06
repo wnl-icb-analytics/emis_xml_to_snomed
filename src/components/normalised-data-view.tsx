@@ -383,9 +383,9 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                         <Badge variant="outline" className="text-xs h-4 px-1 bg-blue-50 text-blue-700 border-blue-200">{failed.codeSystem}</Badge>
                       </TableCell>
                       <TableCell className="h-6 px-2 py-0.5 whitespace-nowrap">
-                        <Badge className="text-xs h-4 px-1 bg-orange-100 text-orange-800 border-orange-200">
+                        <span className="text-xs text-destructive">
                           {failed.reason}
-                        </Badge>
+                        </span>
                       </TableCell>
                     </TableRow>
                   ))

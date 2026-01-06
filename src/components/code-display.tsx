@@ -689,9 +689,9 @@ export default function CodeDisplay({ expandedCodes, report, isExpanding, totalV
                                           </Badge>
                                         </TableCell>
                                         <TableCell>
-                                          <Badge className="text-xs bg-orange-100 text-orange-800 border-orange-200">
+                                          <span className="text-xs text-destructive">
                                             {failed.reason}
-                                          </Badge>
+                                          </span>
                                         </TableCell>
                                       </TableRow>
                                     ))}

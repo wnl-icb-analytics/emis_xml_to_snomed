@@ -6,7 +6,7 @@ import {
   ValueSetGroup,
   EmisValue,
 } from '@/lib/types';
-import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
+import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, buildModificationOfEcl, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
 import {
   expandEclQuery,
   translateEmisCodesToSnomed,
@@ -108,6 +108,12 @@ async function expandSingleValueSet(
   let ukProductConcepts: any[] = [];
   // Track which SCT_CONST codes successfully expanded to products (to exclude from failed codes)
   const successfullyExpandedSctConstCodes = new Set<string>();
+  // Track SCT_CONST codes that returned 0 products (for better error messages)
+  const sctConstCodesWithNoProducts = new Map<string, { substanceCode: string; displayName: string }>();
+  // Track UK Product ECL expressions for display purposes
+  const ukProductEclExpressions: string[] = [];
+  // Track modification ECL expressions to show the full two-step process
+  const modificationEclExpressions: string[] = [];
 
   if (sctConstCodes.length > 0) {
     console.log(`Found ${sctConstCodes.length} SCT_CONST codes, expanding UK Products...`);
@@ -122,17 +128,58 @@ async function expandSingleValueSet(
       }
 
       try {
-        // Build UK Product ECL query using the translated substance code
-        const ukProductEcl = buildUkProductEcl(substanceCode);
-        console.log(`  Expanding UK Products for substance ${substanceCode} (original: ${sctConstValue.originalCode}): ${ukProductEcl}`);
+        // Two-step approach: First find modifications, then find UK Products
+        // Step 1: Find all substances that are modifications of the base substance
+        const modificationEcl = buildModificationOfEcl(substanceCode);
+        console.log(`  Step 1: Finding modifications of substance ${substanceCode}: ${modificationEcl}`);
+        
+        // Track modification ECL for display
+        modificationEclExpressions.push(modificationEcl);
+        
+        let modifications: any[] = [];
+        try {
+          modifications = await expandEclQuery(modificationEcl);
+          console.log(`  -> Found ${modifications.length} modifications of substance ${substanceCode}`);
+        } catch (modError) {
+          console.warn(`  ⚠️  Error finding modifications for ${substanceCode}, continuing with base substance only:`, modError);
+          // Continue with just the base substance if modification query fails
+        }
+        
+        // Step 2: Build ECL to find UK Products with the base substance AND all its modifications
+        const substanceCodes = [substanceCode, ...modifications.map(m => m.code)];
+        console.log(`  Step 2: Querying UK Products for ${substanceCodes.length} substance(s) (base + modifications)`);
+        
+        // Build combined ECL query for all substances
+        let combinedUkProductEcl: string;
+        if (substanceCodes.length === 1) {
+          // Only base substance, no modifications found
+          combinedUkProductEcl = buildUkProductEcl(substanceCode);
+        } else {
+          // Multiple substances - create OR expression with parentheses around each term
+          const ukProductEcls = substanceCodes.map(code => `(${buildUkProductEcl(code)})`);
+          combinedUkProductEcl = ukProductEcls.join(' OR ');
+        }
+        
+        console.log(`  Expanding UK Products: ${combinedUkProductEcl.substring(0, 200)}${combinedUkProductEcl.length > 200 ? '...' : ''}`);
 
-        // Expand the ECL query
-        const products = await expandEclQuery(ukProductEcl);
-        console.log(`  -> Found ${products.length} UK Products for substance ${substanceCode}`);
+        // Expand the combined ECL query
+        const products = await expandEclQuery(combinedUkProductEcl);
+        console.log(`  -> Found ${products.length} UK Products for substance ${substanceCode} and its modifications`);
+
+        // Always track the ECL expression for display (even if no products found)
+        // This ensures the displayed ECL accurately reflects what was queried
+        ukProductEclExpressions.push(combinedUkProductEcl);
 
         // If we got products, mark this SCT_CONST code as successfully expanded
         if (products.length > 0) {
           successfullyExpandedSctConstCodes.add(sctConstValue.originalCode);
+        } else {
+          // Track codes that returned 0 products for better error reporting
+          sctConstCodesWithNoProducts.set(sctConstValue.originalCode, {
+            substanceCode,
+            displayName: sctConstValue.displayName || substanceCode,
+          });
+          console.warn(`  ⚠️  No UK Products found for substance ${substanceCode} (${sctConstValue.displayName || sctConstValue.originalCode}) or its ${modifications.length} modification(s). This may indicate: the substance is not available as a UK Product, the code is historical/inactive, or there's a data issue in the terminology server.`);
         }
 
         // Mark all products as from terminology server
@@ -147,6 +194,11 @@ async function expandSingleValueSet(
         // But if they do, allow them (code not found is acceptable)
         if (isFhirApiError(error) && error.status === 404) {
           console.warn(`  UK Products for substance ${substanceCode} returned 404 (not found), continuing...`);
+          // Track 404 errors for better error reporting
+          sctConstCodesWithNoProducts.set(sctConstValue.originalCode, {
+            substanceCode,
+            displayName: sctConstValue.displayName || substanceCode,
+          });
           // Continue with other substances - 404 means code not found, which is acceptable
           continue;
         }
@@ -397,14 +449,27 @@ async function expandSingleValueSet(
 
       return !codeFound;
     })
-    .map((oc: any) => ({
-      originalCode: oc.originalCode,
-      displayName: oc.displayName,
-      codeSystem: oc.codeSystem,
-      reason: oc.translatedTo
-        ? 'Not found in terminology server expansion'
-        : 'No translation found from ConceptMap',
-    }));
+    .map((oc: any) => {
+      // Provide clearer error messages for SCT_CONST codes that returned 0 products
+      if (oc.codeSystem === 'SCT_CONST' && sctConstCodesWithNoProducts.has(oc.originalCode)) {
+        const noProductsInfo = sctConstCodesWithNoProducts.get(oc.originalCode)!;
+        return {
+          originalCode: oc.originalCode,
+          displayName: oc.displayName,
+          codeSystem: oc.codeSystem,
+          reason: `No UK Products found for substance ${noProductsInfo.substanceCode} (${noProductsInfo.displayName}) or its modifications. The system used a two-step process: (1) found all modifications using "Is modification of" relationship (738774007), then (2) queried for UK Products containing the base substance or any modifications. This may indicate: the substance is not available as a UK Product in the terminology server, the code is historical/inactive, or there's a data issue.`,
+        };
+      }
+
+      return {
+        originalCode: oc.originalCode,
+        displayName: oc.displayName,
+        codeSystem: oc.codeSystem,
+        reason: oc.translatedTo
+          ? 'Not found in terminology server expansion'
+          : 'No translation found from ConceptMap',
+      };
+    });
 
   const vsSnomedParentCodes = vsValues.map((v: ValueWithMetadata) => v.code);
 
@@ -419,12 +484,21 @@ async function expandSingleValueSet(
   // Filter to only include codes that:
   // 1. Have a ConceptMap translation, OR
   // 2. Are refsets (found in RF2 or queried via ECL), OR
-  // 3. Are already SNOMED codes (codeSystem === 'SNOMED_CONCEPT'), OR
-  // 4. Are SCT_CONST codes that successfully expanded to UK Products
+  // 3. Are already SNOMED codes (codeSystem === 'SNOMED_CONCEPT')
   // 
-  // Exclude codes that don't have translations and aren't refsets/SNOMED/SCT_CONST
+  // IMPORTANT: Exclude SCT_CONST codes from regular ECL - they're handled separately via UK Product queries
+  // The UK Product ECL expressions are added separately below, so SCT_CONST codes shouldn't appear
+  // in the regular ECL expression (which uses << CODE syntax)
+  // 
+  // Exclude codes that don't have translations and aren't refsets/SNOMED
   // (these are unmapped XML codes that shouldn't appear in the ECL)
   const successfullyMappedCodes = vsValues.filter((v: ValueWithMetadata) => {
+    // Exclude SCT_CONST codes - they're handled via UK Product queries, not regular ECL
+    // The UK Product queries are tracked separately in ukProductEclExpressions
+    if (v.codeSystem === 'SCT_CONST') {
+      return false;
+    }
+    
     // Check if code has a translation
     const hasTranslation = !!v.translatedSnomedCode;
     
@@ -434,12 +508,9 @@ async function expandSingleValueSet(
     // Check if code is already SNOMED (doesn't need translation)
     const isAlreadySnomed = v.codeSystem === 'SNOMED_CONCEPT';
     
-    // Check if SCT_CONST code successfully expanded to UK Products
-    const isSuccessfulSctConst = v.codeSystem === 'SCT_CONST' && successfullyExpandedSctConstCodes.has(v.originalCode);
-    
     // Include if any of the above conditions are true
     // This ensures we only include codes that have been successfully mapped/translated
-    return hasTranslation || isRefsetCode || isAlreadySnomed || isSuccessfulSctConst;
+    return hasTranslation || isRefsetCode || isAlreadySnomed;
   });
   
   // Convert successfully mapped codes to EmisValue format for ECL builder
@@ -461,10 +532,26 @@ async function expandSingleValueSet(
     console.log(`[expandSingleValueSet] Building ECL for ValueSet ${mapping.valueSetIndex + 1} with ${vsExcludedCodes.length} excluded codes:`, vsExcludedCodes.slice(0, 5));
   }
   
-  const eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap);
+  // Build the base ECL expression for regular codes
+  let eclExpression = buildFormattedEclExpression(eclValues, vsExcludedCodes, allConceptsMap);
+
+  // Combine with UK Product ECL expressions for SCT_CONST codes
+  // The UK Product ECL expressions already include all substances (base + modifications)
+  // from the two-step process, so we just show the final expanded product queries
+  if (ukProductEclExpressions.length > 0) {
+    const ukProductEclPart = ukProductEclExpressions.join(' OR ');
+    
+    if (eclExpression) {
+      // Combine regular ECL with UK Product ECL expressions using OR
+      eclExpression = `(${eclExpression}) OR (${ukProductEclPart})`;
+    } else {
+      // If no regular ECL, just use the UK Product ECL expressions
+      eclExpression = ukProductEclPart;
+    }
+  }
 
   // Debug: log the generated ECL
-  if (vsExcludedCodes.length > 0) {
+  if (vsExcludedCodes.length > 0 || ukProductEclExpressions.length > 0) {
     console.log(`[expandSingleValueSet] Generated ECL expression for ValueSet ${mapping.valueSetIndex + 1}:`, eclExpression.substring(0, 200));
   }
 

@@ -247,15 +247,27 @@ export function CodeExpansionSteps() {
               <div className="flex items-start gap-2">
                 <ArrowRight className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Special ECL Query</p>
+                  <p className="text-sm font-medium">Two-Step ECL Query Process</p>
                   <p className="text-xs text-muted-foreground mb-1">
-                    Uses a specialised ECL query to find all UK Products containing the substance:
+                    Uses a two-step process to find UK Products containing the substance or its modifications (salts, esters):
                   </p>
-                  <code className="text-xs bg-muted px-2 py-1.5 rounded-md block mt-1 font-mono break-all">
-                    {'<< (< 10363601000001109 |UK Product| : 762949000 |Has precise active ingredient| = << <SUBSTANCE_CODE>)'}
-                  </code>
+                  <div className="space-y-2 mt-2">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Step 1: Find modifications</p>
+                      <code className="text-xs bg-muted px-2 py-1.5 rounded-md block mt-1 font-mono break-all">
+                        {'< 738774007 = << <SUBSTANCE_CODE>'}
+                      </code>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Step 2: Find UK Products</p>
+                      <code className="text-xs bg-muted px-2 py-1.5 rounded-md block mt-1 font-mono break-all">
+                        {'(<< (< 10363601000001109 : 762949000 = << <SUBSTANCE_CODE>)) OR (<< (< 10363601000001109 : 762949000 = << <MODIFICATION_1>)) OR ...'}
+                      </code>
+                    </div>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-2">
-                    This query finds all descendants of UK Products that have the specified substance as a precise active ingredient.
+                    First, the system finds all substances that are modifications of the base substance using the "Is modification of" relationship (738774007). 
+                    Then, it queries for UK Products that have either the base substance or any of its modifications as the precise active ingredient.
                   </p>
                 </div>
               </div>
