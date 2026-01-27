@@ -30,7 +30,8 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ match: null });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') throw error;
     console.error('BNF check error:', error);
     return NextResponse.json(
       { error: 'Failed to check BNF sections' },

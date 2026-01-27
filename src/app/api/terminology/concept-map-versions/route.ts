@@ -29,7 +29,8 @@ export async function GET(request: Request) {
       canonicalUrl,
       type,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') throw error;
     console.error('Error fetching ConceptMap versions:', error);
     return NextResponse.json(
       { error: 'Failed to fetch ConceptMap versions' },
