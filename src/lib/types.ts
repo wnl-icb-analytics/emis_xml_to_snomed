@@ -15,12 +15,16 @@ export interface EmisReport {
   parentType?: 'ACTIVE' | 'ALL' | 'POP' | string; // Parent population type (ACTIVE=registered, ALL=all including deducted/deceased, POP=based on another search)
   parentReportId?: string; // If parentType is POP, the GUID of the parent report (matches xmlId of parent)
   rule: string; // Determined by parent structure in XML
+  reportType: 'population' | 'listReport'; // population = search/filter, listReport = dashboard with columns
   valueSets: EmisValueSet[];
+  criteriaGroups?: CriteriaGroup[];
+  columnGroups?: ColumnGroup[]; // For listReport format — each column group defines a dashboard column
 }
 
 export interface EmisValueSet {
   id: string;
   codeSystem?: string; // e.g., "SNOMED_CONCEPT", "EMIS", etc.
+  description?: string; // XML description — often a cluster ID like STAT_COD
   values: EmisValue[];
   exceptions: EmisException[];
 }
@@ -34,6 +38,99 @@ export interface EmisValue {
 
 export interface EmisException {
   code: string;
+}
+
+// === Rule Structure Types ===
+
+export type RuleAction = 'SELECT' | 'REJECT' | 'NEXT';
+export type MemberOperator = 'AND' | 'OR';
+
+export interface RangeBoundary {
+  operator?: string;
+  value?: string;
+  unit?: string;
+  relation?: string;
+}
+
+export interface DateRange {
+  from?: RangeBoundary;
+  to?: RangeBoundary;
+}
+
+export interface ColumnFilter {
+  id?: string;
+  columns: string[];
+  displayName?: string;
+  inNotIn?: string;
+  range?: DateRange;
+  singleValue?: string;
+  valueSets?: EmisValueSet[];
+}
+
+export interface RestrictionCondition {
+  column: string;
+  operator: string;
+  valueSets?: string[];
+  rangeValues?: string[];
+}
+
+export interface SearchRestriction {
+  type: string;
+  description: string;
+  recordCount?: number;
+  direction?: string;
+  conditions?: RestrictionCondition[];
+}
+
+export interface LinkedRelationship {
+  parentColumn?: string;
+  childColumn?: string;
+  rangeValue?: DateRange;
+}
+
+export interface SearchCriterion {
+  id: string;
+  table: string;
+  displayName: string;
+  description?: string;
+  negation: boolean;
+  valueSets: EmisValueSet[];
+  columnFilters: ColumnFilter[];
+  restrictions: SearchRestriction[];
+  exceptionCode?: string;
+  linkedCriteria: SearchCriterion[];
+  relationship?: LinkedRelationship;
+}
+
+export interface PopulationCriterionRef {
+  id: string;
+  reportGuid: string;
+}
+
+export interface CriteriaGroup {
+  id: string;
+  memberOperator: MemberOperator;
+  criteria: SearchCriterion[];
+  populationCriteria: PopulationCriterionRef[];
+  libraryItemRefs?: string[]; // UUIDs referencing external EMIS library definitions
+  actionIfTrue: RuleAction;
+  actionIfFalse: RuleAction;
+}
+
+// === List Report (Dashboard) Types ===
+
+export interface ListColumn {
+  id: string;
+  columns: string[]; // e.g. ["DATE"] or ["USUAL_GP", "ORGANISATION_TERM"]
+  displayName: string;
+}
+
+export interface ColumnGroup {
+  id: string;
+  logicalTableName: string; // "PATIENTS" or "EVENTS"
+  displayName: string; // column header e.g. "Moderate Frailty"
+  listColumns: ListColumn[];
+  criteria: SearchCriterion[];
 }
 
 // === Hierarchical Display Types ===

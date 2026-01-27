@@ -6,6 +6,7 @@ import {
   EmisValue,
 } from './types';
 import { hashString, generateDeterministicId } from './hash-utils';
+import { parseCriteriaGroups, parseColumnGroups } from './rule-parser';
 
 const NAMESPACE = 'http://www.e-mis.com/emisopen';
 
@@ -31,8 +32,6 @@ const IGNORED_VALUES = [
   'U',
   'R',
   'RD',
-  '999011011000230107',
-  '12464001000001103',
   'None',
 ];
 
@@ -49,24 +48,15 @@ export async function parseEmisXml(
   });
 
   if (validationResult !== true) {
-    console.error('XML validation failed:', validationResult);
     throw new Error(`Invalid XML: ${validationResult.err.msg} at line ${validationResult.err.line}`);
   }
-
-  console.log('XML validation passed, parsing...');
 
   const parser = new XMLParser(parserOptions);
   let parsed;
 
   try {
     parsed = parser.parse(xmlContent);
-    console.log('XML parsed successfully');
   } catch (error) {
-    console.error('XML parsing failed with error:', error);
-    console.error('Error details:', {
-      message: error instanceof Error ? error.message : 'Unknown',
-      stack: error instanceof Error ? error.stack : undefined,
-    });
     throw new Error(`XML parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 
@@ -77,13 +67,9 @@ export async function parseEmisXml(
   // The root element is enquiryDocument, not root
   const enquiryDoc = parsed.enquiryDocument || parsed;
 
-  console.log('EnquiryDoc keys:', enquiryDoc ? Object.keys(enquiryDoc) : 'no doc');
-
   // Extract reportFolder elements to build folder structure
   const reportFoldersData = enquiryDoc?.reportFolder || [];
   const reportFolders = Array.isArray(reportFoldersData) ? reportFoldersData : reportFoldersData ? [reportFoldersData] : [];
-
-  console.log('Report folders found:', reportFolders.length);
 
   // Build a map of folder ID to folder object
   const folderMap = new Map<string, { name: string; parentFolder?: string }>();
@@ -118,31 +104,6 @@ export async function parseEmisXml(
   const reportsData = enquiryDoc?.report || [];
   const reports = Array.isArray(reportsData) ? reportsData : reportsData ? [reportsData] : [];
 
-  console.log('Reports found:', reports.length);
-
-  if (reports.length > 0) {
-    // Log the first report's valueSet structure to debug
-    const firstReport = reports[0];
-    const pop = firstReport?.population;
-    const cg = pop?.criteriaGroup;
-    const def = cg?.definition;
-    const crit = def?.criteria;
-    const criterion = crit?.criterion;
-    const criterionArray = Array.isArray(criterion) ? criterion : [criterion];
-    const firstCriterion = criterionArray[0];
-    const vs = firstCriterion?.filterAttribute?.columnValue?.valueSet;
-    if (vs) {
-      const vsArray = Array.isArray(vs) ? vs : [vs];
-      const firstVs = vsArray[0];
-      console.log('First valueSet sample:', firstVs);
-      console.log('First valueSet.values:', firstVs?.values);
-      if (firstVs?.values) {
-        const valuesArray = Array.isArray(firstVs.values) ? firstVs.values : [firstVs.values];
-        console.log('First value in valueSet:', valuesArray[0]);
-      }
-    }
-  }
-
   const processedReports: EmisReport[] = reports
     .map((report: any, reportIndex: number) => {
       const xmlId = report.id || '';
@@ -159,76 +120,69 @@ export async function parseEmisXml(
       const folderId = report.folder;
       const rule = folderId ? buildFolderPath(folderId) : 'Uncategorised';
 
-      // In EMIS XML, the report contains a population > criteriaGroup > definition > criteria > criterion
-      // Each criterion has filterAttribute > columnValue > valueSet
-      // There can be multiple criteriaGroups, and also baseCriteriaGroup
+      // Detect report format: population (search/filter) or listReport (dashboard)
       const population = report.population;
-      
-      // Handle criteriaGroups (can be array or single)
-      const criteriaGroupsData = population?.criteriaGroup || [];
-      const criteriaGroups = Array.isArray(criteriaGroupsData) ? criteriaGroupsData : criteriaGroupsData ? [criteriaGroupsData] : [];
-      
-      // Handle baseCriteriaGroup if present
-      const baseCriteriaGroup = population?.baseCriteriaGroup;
-      if (baseCriteriaGroup) {
-        criteriaGroups.push(baseCriteriaGroup);
-      }
+      const listReport = report.listReport;
+      const reportType = listReport ? 'listReport' as const : 'population' as const;
 
-      // Extract valueSets from all criteriaGroups
       const valueSetsData: any[] = [];
-      criteriaGroups.forEach((criteriaGroup: any) => {
-        const definition = criteriaGroup?.definition;
-        if (!definition) return;
 
-        // criteria is typically a single object containing criterion elements
-        // But handle the case where it might be an array
-        const criteriaData = definition?.criteria;
-        if (!criteriaData) return;
+      if (population) {
+        // Standard population format: population > criteriaGroup > definition > criteria > criterion
+        const criteriaGroupsData = population?.criteriaGroup || [];
+        const criteriaGroups = Array.isArray(criteriaGroupsData) ? criteriaGroupsData : criteriaGroupsData ? [criteriaGroupsData] : [];
 
-        const criteriaArray = Array.isArray(criteriaData) ? criteriaData : [criteriaData];
+        const baseCriteriaGroup = population?.baseCriteriaGroup;
+        if (baseCriteriaGroup) {
+          criteriaGroups.push(baseCriteriaGroup);
+        }
 
-        criteriaArray.forEach((criteria: any) => {
-          // criterion can be an array or single object
-          const criterionData = criteria?.criterion;
-          if (!criterionData) return;
+        criteriaGroups.forEach((criteriaGroup: any) => {
+          const definition = criteriaGroup?.definition;
+          if (!definition) return;
 
-          const criterionArray = Array.isArray(criterionData) ? criterionData : [criterionData];
-          
-          // Extract valueSets from each criterion (including nested structures)
-          criterionArray.forEach((crit: any) => {
-            extractValueSetsFromCriterion(crit, valueSetsData);
+          const criteriaData = definition?.criteria;
+          if (!criteriaData) return;
+
+          const criteriaArray = Array.isArray(criteriaData) ? criteriaData : [criteriaData];
+
+          criteriaArray.forEach((criteria: any) => {
+            const criterionData = criteria?.criterion;
+            if (!criterionData) return;
+
+            const criterionArray = Array.isArray(criterionData) ? criterionData : [criterionData];
+            criterionArray.forEach((crit: any) => {
+              extractValueSetsFromCriterion(crit, valueSetsData);
+            });
           });
         });
-      });
+      } else if (listReport) {
+        // Dashboard format: listReport > columnGroups[] > columnGroup > criteria > criterion
+        const columnGroupsContainers = listReport.columnGroups;
+        const containers = Array.isArray(columnGroupsContainers) ? columnGroupsContainers : columnGroupsContainers ? [columnGroupsContainers] : [];
 
-      // Log valueset structure for debugging - check if EMISINTERNAL codes are isolated
-      const emisInternalValueSets = valueSetsData.filter((vs: any) => {
-        const codeSystem = vs.codeSystem || '';
-        return codeSystem === 'EMISINTERNAL' || codeSystem === 'EMIS';
-      });
-      if (emisInternalValueSets.length > 0) {
-        console.log(`Report "${searchName}" has ${emisInternalValueSets.length} EMISINTERNAL valuesets`);
-        emisInternalValueSets.forEach((vs: any, idx: number) => {
-          // Handle values that might be an array or single object
-          const valuesArray = Array.isArray(vs.values) ? vs.values : vs.values ? [vs.values] : [];
-          const codes = valuesArray.map((v: any) => v.value || v.code || '').filter(Boolean);
-          console.log(`  EMISINTERNAL valueset ${idx}: codes=${codes.join(', ')}`);
-        });
-        
-        // Check if there are SNOMED valuesets nearby
-        const snomedValueSets = valueSetsData.filter((vs: any) => {
-          const codeSystem = vs.codeSystem || '';
-          return codeSystem === 'SNOMED_CONCEPT' || codeSystem === 'SCT_CONST' || codeSystem === 'SCT_DRGGRP';
-        });
-        console.log(`  Nearby SNOMED valuesets: ${snomedValueSets.length}`);
-        if (snomedValueSets.length > 0 && emisInternalValueSets.length > 0) {
-          console.log(`  Checking if EMISINTERNAL codes are in same criterion context as SNOMED codes...`);
+        for (const container of containers) {
+          const groupNodes = container?.columnGroup;
+          const groups = Array.isArray(groupNodes) ? groupNodes : groupNodes ? [groupNodes] : [];
+          for (const node of groups) {
+            const criteriaData = node?.criteria;
+            if (!criteriaData) continue;
+            const criterionNodes = criteriaData?.criterion;
+            const criterionArray = Array.isArray(criterionNodes) ? criterionNodes : criterionNodes ? [criterionNodes] : [];
+            for (const crit of criterionArray) {
+              extractValueSetsFromCriterion(crit, valueSetsData);
+            }
+          }
         }
       }
 
       const valueSets = valueSetsData
         .map((vs, vsIndex) => parseValueSet(vs, vsIndex))
-        .filter((vs) => vs.values.length > 0); // Filter empty valueSets
+        .filter((vs) => vs.values.length > 0);
+
+      // Parse rule structure
+      const parsedCriteriaGroups = population ? parseCriteriaGroups(population) : undefined;
+      const parsedColumnGroups = listReport ? parseColumnGroups(listReport) : undefined;
 
       return {
         id: generateDeterministicId(name, searchName, rule, valueSets, reportIndex),
@@ -239,7 +193,10 @@ export async function parseEmisXml(
         parentType,
         parentReportId,
         rule,
+        reportType,
         valueSets,
+        criteriaGroups: parsedCriteriaGroups,
+        columnGroups: parsedColumnGroups,
       };
     });
 
@@ -363,7 +320,7 @@ function determineRule(
   return 'Other Searches';
 }
 
-function parseValueSet(valueSet: any, index: number): EmisValueSet {
+export function parseValueSet(valueSet: any, index: number): EmisValueSet {
   // In EMIS XML, valueSet contains 'values' (plural) elements
   // Each value element has: <value>, <displayName>, <includeChildren>, <isRefset>
   const valuesData = valueSet.values || [];
@@ -449,36 +406,19 @@ function parseValueSet(valueSet: any, index: number): EmisValueSet {
   });
   
   const exceptionsArray = Array.from(uniqueExceptions.values());
-  
-  // Debug: log if we find exceptions
-  if (exceptionsArray.length > 0) {
-    const exceptionCodes = exceptionsArray.map((e: any) => e.value || e.code || '').filter(Boolean);
-    console.log(`[parseValueSet] ValueSet ${index} found ${exceptionsArray.length} exceptions (${uniqueExceptions.size} unique codes):`, exceptionCodes.slice(0, 10));
-  } else {
-    // Debug: log when no exceptions found (to help diagnose)
-    const hasValueSetLevelException = !!(valueSet.exception || valueSet.exceptions);
-    const hasNestedExceptions = valuesArray.some((v: any) => v.exception);
-    if (hasValueSetLevelException || hasNestedExceptions) {
-      console.log(`[parseValueSet] ValueSet ${index} has exception structure but extracted 0 exceptions. ValueSet-level: ${hasValueSetLevelException}, Nested: ${hasNestedExceptions}`);
-    }
-  }
 
-  // Extract codeSystem directly from XML - this is preserved as-is from the source XML
-  // No conversion is performed - if the XML says "SNOMED_CONCEPT", "EMIS", or any other value, it's kept exactly as-is
-  // This allows us to track the original code system from the XML file
   const codeSystem = valueSet.codeSystem || undefined;
+
+  // Description often contains a cluster ID like STAT_COD, HYP_COD etc.
+  const description = typeof valueSet.description === 'string' ? valueSet.description : undefined;
 
   // Check if the XML has an id attribute (with or without @ prefix from parser)
   const xmlId = valueSet['@_id'] || valueSet.id || undefined;
 
-  // Log to check if XML has IDs
-  if (Math.random() < 0.05) {
-    console.log('ValueSet XML keys:', Object.keys(valueSet), 'xmlId:', xmlId);
-  }
-
   return {
     id: xmlId || `valueset-${index}`,
     codeSystem,
+    description,
     values: valuesArray.map((v: any) => parseValue(v)).filter((v): v is EmisValue => v !== null),
     exceptions: exceptionsArray
       .map((e: any) => ({
@@ -505,70 +445,23 @@ function parseValue(value: any): EmisValue | null {
     // Fallback: sometimes parser gives us {code, displayName, includeChildren}
     code = value.code.toString().trim();
   } else {
-    // Debug: log what we're actually getting
-    console.error('Could not extract code from value:', {
-      value,
-      keys: Object.keys(value),
-      valueType: typeof value.value,
-      valueValue: value.value,
-    });
     return null;
-  }
-  
-  // Debug: log a sample to verify we're extracting correctly
-  if (Math.random() < 0.01) {
-    console.log('parseValue sample:', {
-      extractedCode: code,
-      codeLength: code.length,
-      valueObject: value,
-      valueKeys: Object.keys(value),
-    });
   }
 
   const displayName = value.displayName || '';
-  // Parse includeChildren: handle both string ('true'/'false') and boolean (true/false)
-  // Also handle case-insensitive strings and missing values (default to false)
   const includeChildrenRaw = value.includeChildren;
-  const includeChildren = 
+  const includeChildren =
     includeChildrenRaw === true ||
     includeChildrenRaw === 'true' ||
     String(includeChildrenRaw).toLowerCase() === 'true';
-  
-  // Debug logging for includeChildren parsing (only log a sample to avoid spam)
-  if (Math.random() < 0.01) { // Log ~1% of values for debugging
-    console.log('includeChildren parsing sample:', {
-      code,
-      raw: includeChildrenRaw,
-      type: typeof includeChildrenRaw,
-      parsed: includeChildren,
-      allKeys: Object.keys(value)
-    });
-  }
-  
+
   // Detect refset IDs: check isRefset flag first, then fallback to pattern matching
-  // Refsets use ^ operator in ECL instead of <<
-  // The XML has <isRefset>true</isRefset> as a sibling element
-  const isRefsetFlag = value.isRefset === true || 
-                       value.isRefset === 'true' || 
+  const isRefsetFlag = value.isRefset === true ||
+                       value.isRefset === 'true' ||
                        value.isRefset === '1' ||
                        String(value.isRefset).toLowerCase() === 'true';
-  
-  // Pattern: codes starting with 999 and length >= 15 are typically refsets
   const isRefsetPattern = code.startsWith('999') && code.length >= 15;
-  
   const isRefset = isRefsetFlag || isRefsetPattern;
-  
-  // Debug logging for refset detection
-  if (code.startsWith('999')) {
-    console.log('Refset detection:', { 
-      code, 
-      isRefsetFlag, 
-      isRefsetPattern, 
-      isRefsetValue: value.isRefset,
-      isRefset,
-      valueKeys: Object.keys(value)
-    });
-  }
 
   // Filter out ignored values
   if (!code || IGNORED_VALUES.includes(code)) {

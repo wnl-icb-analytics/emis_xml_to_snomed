@@ -87,6 +87,9 @@ export default function XmlUploader() {
               })),
               exceptions: vs.exceptions.map((e) => e.code),
             })),
+            reportType: report.reportType,
+            criteriaGroups: report.criteriaGroups,
+            columnGroups: report.columnGroups,
           })),
         };
 

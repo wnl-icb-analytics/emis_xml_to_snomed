@@ -13,6 +13,7 @@ import { loadParsedXmlData } from '@/lib/storage';
 import { ExtractionFileList } from '@/components/extraction-file-list';
 import { ExtractionDataModel } from '@/components/extraction-data-model';
 import { expandValueSet } from '@/lib/valueset-expansion';
+import { buildDeduplicatedIndexMap } from '@/lib/valueset-utils';
 import { formatTime, formatTimeNatural } from '@/lib/time-utils';
 import { convertToCSV } from '@/lib/csv-utils';
 import { ExtractionDataViewer } from '@/components/extraction-data-viewer';
@@ -210,6 +211,7 @@ export default function BatchExtractor() {
 
         // Process each ValueSet in the report
         let completedValueSets = 0;
+        const dedupMap = buildDeduplicatedIndexMap(report.valueSets);
 
         for (const [vsIndex, vs] of report.valueSets.entries()) {
           completedValueSets++;
@@ -234,12 +236,13 @@ export default function BatchExtractor() {
           }
 
           try {
-            // Use shared utility to expand the ValueSet
+            // Use shared utility to expand the ValueSet (deduplicated index for consistent naming)
+            const dedupIndex = dedupMap.get(vsIndex) ?? vsIndex;
             const result = await expandValueSet(
               report.id,
               report.name,
               vs,
-              vsIndex,
+              dedupIndex,
               equivalenceFilter
             );
 

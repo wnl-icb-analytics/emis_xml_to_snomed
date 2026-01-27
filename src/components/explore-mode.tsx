@@ -3,11 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { EmisReport, ExpandedCodeSet, EmisXmlDocument } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
+import RuleDisplay from '@/components/rule-display';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight, PlayCircle, FileX } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
+import { buildDeduplicatedIndexMap } from '@/lib/valueset-utils';
 import { useSettings } from '@/contexts/SettingsContext';
 import {
   AlertDialog,
@@ -121,6 +123,7 @@ export default function ExploreMode() {
 
       // Process each valueSet sequentially with separate API calls
       const allConcepts = new Map<string, any>();
+      const dedupMap = buildDeduplicatedIndexMap(reportToExpand.valueSets);
 
       for (let vsIndex = 0; vsIndex < reportToExpand.valueSets.length; vsIndex++) {
         // Check if expansion was cancelled or if report has changed
@@ -131,13 +134,14 @@ export default function ExploreMode() {
         }
 
         const vs = reportToExpand.valueSets[vsIndex];
+        const dedupIndex = dedupMap.get(vsIndex) ?? vsIndex;
 
         // Use shared utility to expand the ValueSet
         const result = await expandValueSet(
           reportToExpand.id,
           reportToExpand.name,
           vs,
-          vsIndex,
+          dedupIndex,
           equivalenceFilter
         );
 
@@ -377,52 +381,19 @@ export default function ExploreMode() {
           )}
         </div>
 
-        {/* Prominent expand card - only show before expansion starts */}
-        {!expandedData && !isExpanding && (
-          <Card className={selectedReport.valueSets.length === 0 ? "bg-muted/30 border-muted" : "bg-primary/5 border-primary/20"}>
-            <CardContent className="pt-6">
-              <div className="flex flex-col items-center text-center space-y-4">
-                <div className={`h-12 w-12 rounded-full flex items-center justify-center ${selectedReport.valueSets.length === 0 ? 'bg-muted' : 'bg-primary/10'}`}>
-                  {selectedReport.valueSets.length === 0 ? (
-                    <FileX className="h-6 w-6 text-muted-foreground" />
-                  ) : (
-                    <PlayCircle className="h-6 w-6 text-primary" />
-                  )}
-                </div>
-                <div>
-                  {selectedReport.valueSets.length === 0 ? (
-                    <>
-                      <h3 className="text-lg font-semibold mb-1">No ValueSets to expand</h3>
-                      <p className="text-sm text-muted-foreground max-w-xl">
-                        This report does not contain any ValueSets. There are no codes to expand.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
-                      <p className="text-sm text-muted-foreground max-w-xl">
-                        This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
-                      </p>
-                    </>
-                  )}
-                </div>
-                {selectedReport.valueSets.length > 0 && (
-                  <Button
-                    onClick={handleExpandReport}
-                    size="lg"
-                    className="text-base px-8 py-6 h-auto"
-                  >
-                    Expand all codes
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {expandedData && (
+        {/* Rule display (structured view) or fallback to flat view */}
+        {(selectedReport.criteriaGroups?.length ?? 0) > 0 || (selectedReport.columnGroups?.length ?? 0) > 0 ? (
           <>
-            {expandedData.error ? (
+            <RuleDisplay
+              report={selectedReport}
+              expandedData={expandedData?.error ? null : expandedData}
+              isExpanding={isExpanding}
+              totalValueSets={selectedReport.valueSets.length}
+              onExpandClick={handleExpandReport}
+              onCancel={handleCancel}
+              allReports={allReports}
+            />
+            {expandedData?.error && (
               <Card className="border-destructive">
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-3">
@@ -434,15 +405,78 @@ export default function ExploreMode() {
                   </div>
                 </CardContent>
               </Card>
-            ) : (
-              <CodeDisplay
-                expandedCodes={expandedData}
-                report={selectedReport}
-                isExpanding={isExpanding}
-                totalValueSets={selectedReport?.valueSets.length}
-                onCancel={handleCancel}
-                showBnfHints={true}
-              />
+            )}
+          </>
+        ) : (
+          <>
+            {/* Flat expand card fallback (no criteria groups) */}
+            {!expandedData && !isExpanding && (
+              <Card className={selectedReport.valueSets.length === 0 ? "bg-muted/30 border-muted" : "bg-primary/5 border-primary/20"}>
+                <CardContent className="pt-6">
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className={`h-12 w-12 rounded-full flex items-center justify-center ${selectedReport.valueSets.length === 0 ? 'bg-muted' : 'bg-primary/10'}`}>
+                      {selectedReport.valueSets.length === 0 ? (
+                        <FileX className="h-6 w-6 text-muted-foreground" />
+                      ) : (
+                        <PlayCircle className="h-6 w-6 text-primary" />
+                      )}
+                    </div>
+                    <div>
+                      {selectedReport.valueSets.length === 0 ? (
+                        <>
+                          <h3 className="text-lg font-semibold mb-1">No ValueSets to expand</h3>
+                          <p className="text-sm text-muted-foreground max-w-xl">
+                            This report does not contain any ValueSets. There are no codes to expand.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <h3 className="text-lg font-semibold mb-1">Ready to expand SNOMED codes</h3>
+                          <p className="text-sm text-muted-foreground max-w-xl">
+                            This will query the terminology server to expand {selectedReport.valueSets.length === 1 ? 'the' : `all ${selectedReport.valueSets.length}`} ValueSet{selectedReport.valueSets.length !== 1 ? 's' : ''} and retrieve the complete list of SNOMED CT codes and their descriptions.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    {selectedReport.valueSets.length > 0 && (
+                      <Button
+                        onClick={handleExpandReport}
+                        size="lg"
+                        className="text-base px-8 py-6 h-auto"
+                      >
+                        Expand all codes
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {expandedData && (
+              <>
+                {expandedData.error ? (
+                  <Card className="border-destructive">
+                    <CardContent className="pt-6">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                        <div>
+                          <h3 className="font-semibold text-destructive mb-1">Expansion Error</h3>
+                          <p className="text-sm text-muted-foreground">{expandedData.error}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <CodeDisplay
+                    expandedCodes={expandedData}
+                    report={selectedReport}
+                    isExpanding={isExpanding}
+                    totalValueSets={selectedReport?.valueSets.length}
+                    onCancel={handleCancel}
+                    showBnfHints={true}
+                  />
+                )}
+              </>
             )}
           </>
         )}

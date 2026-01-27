@@ -162,6 +162,35 @@ export function generateValueSetId(reportId: string, valueSetHash: string, value
 }
 
 /**
+ * Builds a deduplicated index map for a report's valueSets.
+ * ValueSets with identical codes (same code hash) share the same index,
+ * so friendly names are consistent (e.g. two identical valueSets both get _vs1
+ * instead of _vs1 and _vs2).
+ * Returns a Map from original array index to deduplicated index.
+ */
+export function buildDeduplicatedIndexMap(
+  valueSets: Array<{ values: Array<{ code: string }> }>
+): Map<number, number> {
+  const indexMap = new Map<number, number>();
+  const codeHashToIndex = new Map<string, number>();
+  let dedupIndex = 0;
+
+  for (let i = 0; i < valueSets.length; i++) {
+    const codeKey = valueSets[i].values.map(v => v.code).sort().join(',');
+    const existing = codeHashToIndex.get(codeKey);
+    if (existing !== undefined) {
+      indexMap.set(i, existing);
+    } else {
+      codeHashToIndex.set(codeKey, dedupIndex);
+      indexMap.set(i, dedupIndex);
+      dedupIndex++;
+    }
+  }
+
+  return indexMap;
+}
+
+/**
  * Generates a shorter friendly name using acronyms
  * Keeps parenthetical content in its original position
  * Example: "On Diabetes Register- LTC LCS Priority Group 1 (HRC)" -> "odrltclpg1hrc_vs1"
