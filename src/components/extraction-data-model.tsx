@@ -34,7 +34,7 @@ export function ExtractionDataModel({ className }: { className?: string }) {
       name: 'expanded_concepts',
       primaryKey: 'concept_id',
       foreignKeys: [{ column: 'valueset_id', references: 'valuesets.valueset_id' }],
-      columns: ['concept_id', 'valueset_id', 'snomed_code', 'display', 'source', 'exclude_children'],
+      columns: ['concept_id', 'valueset_id', 'snomed_code', 'display', 'source', 'exclude_children', 'is_descendant'],
     },
     {
       name: 'failed_codes',

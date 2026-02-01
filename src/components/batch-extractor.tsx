@@ -279,6 +279,7 @@ export default function BatchExtractor() {
                 });
 
                 // Add expanded concepts
+                const parentCodesSet = new Set(group.parentCodes || []);
                 group.concepts?.forEach((concept: any, idx: number) => {
                   normalizedData.expandedConcepts.push({
                     concept_id: `${group.valueSetId}-c${idx}`,
@@ -287,6 +288,7 @@ export default function BatchExtractor() {
                     display: concept.display,
                     source: concept.source || 'terminology_server', // Use actual source (rf2_file or terminology_server)
                     exclude_children: concept.excludeChildren || false,
+                    is_descendant: !parentCodesSet.has(concept.code),
                   });
                 });
 

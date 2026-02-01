@@ -31,10 +31,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
   const originalCodesCount = expandedCodes.valueSetGroups?.reduce((sum, g) => sum + (g.originalCodes?.length || 0), 0) || 0;
   const expandedConceptsCount = expandedCodes.valueSetGroups?.reduce((sum, g) => sum + g.concepts.length, 0) || 0;
   const failedCodesCount = expandedCodes.valueSetGroups?.reduce((sum, g) => sum + (g.failedCodes?.length || 0), 0) || 0;
-  const exceptionsCount = expandedCodes.valueSetGroups?.reduce((sum, g) => {
-    const vs = report.valueSets[g.valueSetIndex];
-    return sum + (vs?.exceptions?.length || 0);
-  }, 0) || 0;
+  const exceptionsCount = expandedCodes.valueSetGroups?.reduce((sum, g) => sum + (g.exceptions?.length || 0), 0) || 0;
 
   const handleDownloadAllTables = async () => {
     // Build reports table
@@ -107,12 +104,15 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
       })) || []
     ) || [];
 
-    // Build exceptions table
+    // Build exceptions table (using data from API response with translation info)
     const exceptions = expandedCodes.valueSetGroups?.flatMap((group) =>
-      report.valueSets[group.valueSetIndex]?.exceptions?.map((exception, excIdx) => ({
+      group.exceptions?.map((exception: any, excIdx: number) => ({
         exception_id: `${group.valueSetId}-exc${excIdx}`,
         valueset_id: group.valueSetId,
-        excluded_code: exception.code,
+        original_excluded_code: exception.originalExcludedCode,
+        translated_to_snomed_code: exception.translatedToSnomedCode || '',
+        included_in_ecl: exception.includedInEcl || false,
+        translation_error: exception.translationError || '',
       })) || []
     ) || [];
 
@@ -407,18 +407,26 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
               <TableRow className="hover:bg-transparent">
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">exception_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">valueset_id</TableHead>
-                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">excluded_code</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">original_excluded_code</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translated_to_snomed_code</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">included_in_ecl</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translation_error</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {expandedCodes.valueSetGroups?.flatMap((group, vsIdx) =>
-                report.valueSets[group.valueSetIndex]?.exceptions.map((exception, excIdx) => (
+              {expandedCodes.valueSetGroups?.flatMap((group) =>
+                group.exceptions?.map((exception: any, excIdx: number) => (
                   <TableRow key={`${group.valueSetId}-exc${excIdx}`}>
                     <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">
                       {`${group.valueSetId}-exc${excIdx}`}
                     </TableCell>
                     <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{group.valueSetId}</TableCell>
-                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{exception.code}</TableCell>
+                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{exception.originalExcludedCode}</TableCell>
+                    <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{exception.translatedToSnomedCode || ''}</TableCell>
+                    <TableCell className="h-6 px-2 py-0.5 text-xs text-center whitespace-nowrap">
+                      {exception.includedInEcl ? '✓' : ''}
+                    </TableCell>
+                    <TableCell className="h-6 px-2 py-0.5 text-xs text-muted-foreground whitespace-nowrap">{exception.translationError || ''}</TableCell>
                   </TableRow>
                 ))
               )}

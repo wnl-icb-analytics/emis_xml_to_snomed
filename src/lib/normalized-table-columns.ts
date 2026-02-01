@@ -46,6 +46,7 @@ export const normalizedTableColumns = {
     { key: 'display', label: 'display' },
     { key: 'source', label: 'source' },
     { key: 'exclude_children', label: 'exclude_children' },
+    { key: 'is_descendant', label: 'is_descendant' },
   ],
   failedCodes: [
     { key: 'failed_code_id', label: 'failed_code_id' },
