@@ -21,7 +21,7 @@ export default function LayoutWrapper({
     <SidebarProvider style={{ '--sidebar-width': '28rem' } as React.CSSProperties}>
       <AppSidebar />
       <SidebarInset className="flex flex-col w-full overflow-hidden">
-        <main className="flex-1 overflow-auto w-full">
+        <main className="flex-1 overflow-auto w-full bg-background">
           {children}
         </main>
       </SidebarInset>

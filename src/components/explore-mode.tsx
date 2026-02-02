@@ -236,10 +236,10 @@ export default function ExploreMode() {
   if (!isCheckingXml && !hasXmlLoaded) {
     return (
       <div className="flex items-center justify-center min-h-full p-6">
-          <Card className="max-w-2xl w-full">
+          <Card className="max-w-2xl w-full shadow-sm bg-card shadow-sm">
             <CardContent className="pt-6">
               <div className="text-center space-y-4">
-                <FileText className="h-16 w-16 mx-auto text-muted-foreground" />
+                <FileText className="h-16 w-16 mx-auto text-primary/60" />
                 <div>
                   <h2 className="text-2xl font-bold mb-2">Welcome to EMIS XML SNOMED Analyser</h2>
                   <p className="text-muted-foreground mb-4">
@@ -266,10 +266,10 @@ export default function ExploreMode() {
   if (!selectedReport) {
     return (
       <div className="flex items-center justify-center min-h-full p-6">
-          <Card className="max-w-md w-full">
+          <Card className="max-w-md w-full shadow-sm bg-card shadow-sm">
             <CardContent className="pt-6">
               <div className="text-center space-y-4">
-                <FileText className="h-12 w-12 mx-auto text-muted-foreground" />
+                <FileText className="h-12 w-12 mx-auto text-primary/50" />
                 <div>
                   <h3 className="text-lg font-semibold mb-2">Select a search report</h3>
                   <p className="text-sm text-muted-foreground">
@@ -411,10 +411,10 @@ export default function ExploreMode() {
           <>
             {/* Flat expand card fallback (no criteria groups) */}
             {!expandedData && !isExpanding && (
-              <Card className={selectedReport.valueSets.length === 0 ? "bg-muted/30 border-muted" : "bg-primary/5 border-primary/20"}>
+              <Card className={selectedReport.valueSets.length === 0 ? "bg-muted/50 border-muted" : "bg-gradient-to-br from-primary/5 via-primary/10 to-accent/20 border-primary/30 shadow-sm"}>
                 <CardContent className="pt-6">
                   <div className="flex flex-col items-center text-center space-y-4">
-                    <div className={`h-12 w-12 rounded-full flex items-center justify-center ${selectedReport.valueSets.length === 0 ? 'bg-muted' : 'bg-primary/10'}`}>
+                    <div className={`h-12 w-12 rounded-full flex items-center justify-center ${selectedReport.valueSets.length === 0 ? 'bg-muted' : 'bg-primary/15 ring-1 ring-primary/20'}`}>
                       {selectedReport.valueSets.length === 0 ? (
                         <FileX className="h-6 w-6 text-muted-foreground" />
                       ) : (

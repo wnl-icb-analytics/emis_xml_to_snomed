@@ -82,10 +82,10 @@ function codeSystemLabel(cs?: string): string {
 
 function actionBadgeClass(action: string): string {
   switch (action) {
-    case 'SELECT': return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30';
-    case 'REJECT': return 'bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30';
-    case 'NEXT': return 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30';
-    default: return 'bg-gray-500/15 text-gray-700 dark:text-gray-300 border-gray-500/30';
+    case 'SELECT': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700';
+    case 'REJECT': return 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-red-300 dark:border-red-700';
+    case 'NEXT': return 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 border-amber-300 dark:border-amber-700';
+    default: return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-300 dark:border-gray-600';
   }
 }
 
@@ -189,10 +189,10 @@ export default function RuleDisplay({
     <div className="space-y-4">
       {/* Expand button */}
       {!expandedData && !isExpanding && (
-        <Card className={totalValueSets === 0 ? 'bg-muted/30 border-muted' : 'bg-primary/5 border-primary/20'}>
+        <Card className={totalValueSets === 0 ? 'bg-muted/50 border-muted' : 'bg-gradient-to-br from-primary/5 via-primary/10 to-accent/20 border-primary/30 shadow-sm'}>
           <CardContent className="pt-6">
             <div className="flex flex-col items-center text-center space-y-4">
-              <div className={`h-12 w-12 rounded-full flex items-center justify-center ${totalValueSets === 0 ? 'bg-muted' : 'bg-primary/10'}`}>
+              <div className={`h-12 w-12 rounded-full flex items-center justify-center ${totalValueSets === 0 ? 'bg-muted' : 'bg-primary/15 ring-1 ring-primary/20'}`}>
                 {totalValueSets === 0 ? (
                   <FileX className="h-6 w-6 text-muted-foreground" />
                 ) : (
@@ -228,7 +228,7 @@ export default function RuleDisplay({
 
       {/* Expansion progress */}
       {isExpanding && (
-        <Card className="border-primary/30">
+        <Card className="border-primary/40 bg-primary/5 shadow-sm">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -352,16 +352,16 @@ function CriteriaGroupCard({
   }
 
   return (
-    <Card>
-      {/* Header with subtle grey background */}
-      <div className="flex items-center justify-between py-2.5 px-4 bg-muted/40 border-b border-border/50 rounded-t-lg">
+    <Card className="bg-card shadow-sm">
+      {/* Header with subtle blue background */}
+      <div className="flex items-center justify-between py-2.5 px-4 bg-gradient-to-r from-slate-700 to-slate-800 dark:from-slate-800 dark:to-slate-900 text-white rounded-t-xl">
         <span className="font-semibold text-sm">{ruleName}</span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Pass:</span>
+          <span className="text-xs text-slate-300">Pass:</span>
           <Badge variant="outline" className={actionBadgeClass(group.actionIfTrue)}>
             {actionLabel(group.actionIfTrue)}
           </Badge>
-          <span className="text-xs text-muted-foreground">Fail:</span>
+          <span className="text-xs text-slate-300">Fail:</span>
           <Badge variant="outline" className={actionBadgeClass(group.actionIfFalse)}>
             {actionLabel(group.actionIfFalse)}
           </Badge>
@@ -369,7 +369,7 @@ function CriteriaGroupCard({
       </div>
 
       {/* Rule content */}
-      <CardContent className="pt-3 pb-4 px-4 space-y-3">
+      <CardContent className="pt-3 pb-4 px-4 space-y-1">
         {/* Population criteria refs */}
         {group.populationCriteria.length > 0 && (
           <div className="space-y-1">
@@ -459,9 +459,9 @@ function ColumnGroupCard({
   }
 
   return (
-    <Card>
+    <Card className="bg-card shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between py-2.5 px-4 bg-muted/40 border-b border-border/50 rounded-t-lg">
+      <div className="flex items-center justify-between py-2.5 px-4 bg-gradient-to-r from-slate-700 to-slate-800 dark:from-slate-800 dark:to-slate-900 text-white rounded-t-xl">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-sm">{group.displayName}</span>
           <Badge variant="outline" className="bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20 text-[10px] px-1.5">
@@ -480,7 +480,7 @@ function ColumnGroupCard({
       </div>
 
       {/* Criteria */}
-      <CardContent className="pt-3 pb-4 px-4 space-y-3">
+      <CardContent className="pt-3 pb-4 px-4 space-y-1">
         {group.criteria.length > 0 ? (
           group.criteria.map((criterion, cIdx) => (
             <CriterionCard
@@ -656,10 +656,10 @@ function CriterionCard({
   }
 
   return (
-    <div className={`rounded-md border ${isLinked ? 'border-l-2 border-l-blue-500 ml-4' : 'border-border'}`}>
+    <div className={`rounded-md border ${isLinked ? 'border-l-2 border-l-blue-500 ml-4 bg-blue-500/5' : 'border-border bg-muted/30'}`}>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
-          <div className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors">
+          <div className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors rounded-t-md">
             {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 flex-shrink-0" />}
             <span className="text-sm font-medium truncate">{criterion.displayName || `Criterion ${index + 1}`}</span>
             <Badge variant="outline" className="bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20 text-[10px] px-1.5">
@@ -789,7 +789,7 @@ function ValueSetRow({ vs, friendlyName, expanded }: { vs: EmisValueSet; friendl
   const firstDisplayName = displayNames[0] || '';
 
   return (
-    <div className="rounded border border-border/50 px-2 py-1.5 bg-muted/20">
+    <div className="rounded border border-border/60 px-2 py-1.5 bg-background/80">
       {/* Header row */}
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
@@ -813,11 +813,14 @@ function ValueSetRow({ vs, friendlyName, expanded }: { vs: EmisValueSet; friendl
               </span>
             )}
           </div>
-          {/* Metadata line: code count, cluster ID, exceptions */}
+          {/* Metadata line: code count, code system, cluster ID, exceptions */}
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className="text-[11px] text-muted-foreground">
               {codeCount} code{codeCount !== 1 ? 's' : ''}
             </span>
+            <Badge variant="outline" className={`${codeSystemBadgeClass(vs.codeSystem)} text-[10px] px-1.5`}>
+              {codeSystemLabel(vs.codeSystem)}
+            </Badge>
             {vs.description && (
               <CopyableId label="Cluster" value={vs.description} />
             )}
@@ -846,9 +849,6 @@ function ValueSetRow({ vs, friendlyName, expanded }: { vs: EmisValueSet; friendl
               )}
             </>
           )}
-          <Badge variant="outline" className={`${codeSystemBadgeClass(vs.codeSystem)} text-[10px] px-1.5`}>
-            {codeSystemLabel(vs.codeSystem)}
-          </Badge>
           {(codeCount > 0 || expanded) && (
             <button
               onClick={() => setShowCodes(!showCodes)}
