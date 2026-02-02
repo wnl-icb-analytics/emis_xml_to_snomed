@@ -259,14 +259,14 @@ export default function BatchExtractor() {
 
         const chunk = uniqueHashes.slice(i, i + CONCURRENCY);
         
-        // Update status
+        // Update status - show unique ValueSets progress, not reports
         setProcessingStatus({
-          currentReport: 1,
-          totalReports,
-          reportName: `Expanding unique code sets`,
+          currentReport: completedCount + 1,
+          totalReports: totalUniqueValueSets,
+          reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
           currentValueSet: completedCount + 1,
           totalValueSets: totalUniqueValueSets,
-          message: `Expanding ${chunk.length} unique ValueSets in parallel (${completedCount + 1}-${Math.min(completedCount + chunk.length, totalUniqueValueSets)} of ${totalUniqueValueSets} unique, ${totalInstanceCount} total instances)`,
+          message: `Expanding ${Math.min(chunk.length, totalUniqueValueSets - completedCount)} unique ValueSets in parallel`,
         });
 
         // Expand chunk in parallel - use first instance of each hash as template
@@ -619,10 +619,10 @@ export default function BatchExtractor() {
                   <Loader2 className="h-5 w-5 animate-spin text-primary flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold">Extracting Reports</h3>
+                      <h3 className="font-semibold">Expanding Unique ValueSets</h3>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Report {processingStatus.currentReport} of {processingStatus.totalReports}: {processingStatus.reportName}
+                      Unique ValueSet {processingStatus.currentReport} of {processingStatus.totalReports} ({processingStatus.reportName})
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
                       {processingStatus.message}
