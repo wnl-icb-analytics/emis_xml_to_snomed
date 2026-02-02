@@ -16,6 +16,7 @@ import { formatForSql } from '@/lib/sql-formatter';
 import { generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
 import { expandRefsetsFromRf2, refsetExistsInRf2, getRefsetDisplayName } from '@/lib/rf2-refset-parser';
 import { FhirApiError, isFhirApiError } from '@/lib/fhir-error-handler';
+import { isDmdCode } from '@/lib/code-system-utils';
 
 // Internal type for values with additional metadata during expansion
 interface ValueWithMetadata extends EmisValue {
@@ -429,10 +430,35 @@ async function expandSingleValueSet(
     refsetName: getRefsetDisplayName(refsetId) || `Refset ${refsetId}`,
   }));
 
+  // Track dm+d codes - SCT_PREP codes that are valid dm+d (namespace 1000033)
+  // These can't be expanded via terminology server (UK Drug Extension not loaded)
+  // but they ARE valid SNOMED codes and should not be flagged as failures
+  const dmdCodes = originalCodesMetadata
+    .filter((oc: any) => {
+      // Check if this is a SCT_PREP code that is a valid dm+d code
+      if (oc.codeSystem === 'SCT_PREP' && isDmdCode(oc.originalCode)) {
+        return true;
+      }
+      return false;
+    })
+    .map((oc: any) => ({
+      originalCode: oc.originalCode,
+      displayName: oc.displayName,
+      codeSystem: oc.codeSystem,
+      isDmd: true,
+      note: 'Valid dm+d code (SNOMED namespace 1000033). Cannot be expanded - UK Drug Extension not loaded on terminology server.',
+    }));
+
+  if (dmdCodes.length > 0) {
+    console.log(`  Found ${dmdCodes.length} valid dm+d codes (SCT_PREP with namespace 1000033) - not flagging as failures`);
+  }
+
   // Track failed codes - codes that don't appear in expanded concepts
   // Exclude SCT_CONST codes that successfully expanded to UK Products
   // Exclude refsets that successfully expanded from RF2 (refset ID itself isn't a concept)
+  // Exclude SCT_PREP codes that are valid dm+d codes (they can't be expanded but are valid)
   const expandedCodeSet = new Set(filteredConcepts.map((c: any) => c.code));
+  const dmdCodeSet = new Set(dmdCodes.map((d: any) => d.originalCode));
   const failedCodes = originalCodesMetadata
     .filter((oc: any) => {
       // Skip SCT_CONST codes that successfully expanded to UK Products
@@ -444,6 +470,12 @@ async function expandSingleValueSet(
       // Skip refsets that successfully expanded from RF2
       // (The refset ID itself isn't a concept, so it won't appear in expanded concepts)
       if (oc.isRefset && successfullyExpandedRefsets.has(oc.translatedTo || oc.originalCode)) {
+        return false;
+      }
+
+      // Skip SCT_PREP codes that are valid dm+d codes
+      // These are valid SNOMED codes but can't be expanded without UK Drug Extension
+      if (dmdCodeSet.has(oc.originalCode)) {
         return false;
       }
 
@@ -628,6 +660,7 @@ async function expandSingleValueSet(
     eclExpression: eclExpression || undefined,
     expansionError,
     failedCodes: failedCodes.length > 0 ? failedCodes : undefined,
+    dmdCodes: dmdCodes.length > 0 ? dmdCodes : undefined,
     refsets: refsetsMetadata.length > 0 ? refsetsMetadata : undefined,
     originalCodes: originalCodesMetadata,
     exceptions: exceptionsMetadata.length > 0 ? exceptionsMetadata : undefined,

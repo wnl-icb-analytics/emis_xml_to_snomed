@@ -77,3 +77,32 @@ export function isEmisCodeSystem(codeSystem?: string): boolean {
   const system = codeSystem.toUpperCase();
   return system === 'EMISINTERNAL' || system === 'EMIS';
 }
+
+/**
+ * Checks if a SNOMED code is a dm+d code based on namespace
+ * dm+d codes use namespace 1000033 (7 digits before the check digit)
+ * SNOMED CT structure: [item ID][namespace 7 digits][check digit 1 digit]
+ * 
+ * Examples:
+ * - 91941000033117 (Atorvastatin 10mg tablets)
+ * - 578641000033114 (Fluvastatin 20mg capsules)
+ * - 1336841000033110 (Simvastatin 10mg tablets)
+ */
+export function isDmdCode(code: string): boolean {
+  if (!code || typeof code !== 'string') return false;
+  // Must be numeric, at least 9 digits (1 item + 7 namespace + 1 check)
+  // Namespace 1000033 appears before the final check digit
+  return /^\d+1000033\d$/.test(code);
+}
+
+/**
+ * Gets dm+d info for display purposes
+ */
+export function getDmdCodeInfo(code: string): { isDmd: true; namespace: string; type: string } | null {
+  if (!isDmdCode(code)) return null;
+  return {
+    isDmd: true,
+    namespace: '1000033',
+    type: 'dm+d VMP/AMP', // Could be VMP, AMP, VMPP, or AMPP
+  };
+}

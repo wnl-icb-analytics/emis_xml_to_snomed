@@ -231,6 +231,14 @@ export interface ValueSetGroup {
     codeSystem: string;
     reason: string; // Why it failed (e.g., "No translation found", "Not in terminology server")
   }>;
+  // dm+d codes - valid SNOMED codes that can't be expanded (UK Drug Extension not on server)
+  dmdCodes?: Array<{
+    originalCode: string;
+    displayName: string;
+    codeSystem: string;
+    isDmd: boolean;
+    note: string; // Explanation of why it wasn't expanded
+  }>;
   // Refset metadata (if this ValueSet contains refsets)
   refsets?: Array<{
     refsetId: string;
