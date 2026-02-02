@@ -91,7 +91,19 @@ async function tryConceptMapTranslation(
       return null; // 404 - try fallback ConceptMap
     }
 
-    const data: ConceptMapTranslateResponse = await response.json();
+    // Safely parse JSON
+    let data: ConceptMapTranslateResponse;
+    try {
+      const responseText = await response.text();
+      if (!responseText.trim().startsWith('{')) {
+        console.warn(`ConceptMap translation returned non-JSON for ${emisCode}:`, responseText.substring(0, 200));
+        return null;
+      }
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.warn(`Failed to parse ConceptMap response for ${emisCode}:`, parseError);
+      return null;
+    }
 
     // Extract the first match from the translation result
     if (data.parameter) {
@@ -269,7 +281,19 @@ export async function resolveHistoricalConcept(
       return { currentConceptId: conceptId, isHistorical: false };
     }
 
-    const data = await response.json();
+    // Safely parse JSON
+    let data: any;
+    try {
+      const responseText = await response.text();
+      if (!responseText.trim().startsWith('{')) {
+        console.warn(`Historical concept lookup returned non-JSON for ${conceptId}:`, responseText.substring(0, 200));
+        return { currentConceptId: conceptId, isHistorical: false };
+      }
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.warn(`Failed to parse historical concept response for ${conceptId}:`, parseError);
+      return { currentConceptId: conceptId, isHistorical: false };
+    }
 
     // Extract display name
     let display: string | undefined;
@@ -448,7 +472,36 @@ export async function expandEclQuery(
     return errorResult; // Returns [] for 404
   }
 
-  const data: FhirValueSetExpansion = await response.json();
+  // Safely parse JSON with better error handling
+  let data: FhirValueSetExpansion;
+  try {
+    const responseText = await response.text();
+    
+    // Check if response looks like JSON
+    if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
+      console.error('Terminology server returned non-JSON response:', {
+        status: response.status,
+        contentType: response.headers.get('content-type'),
+        bodyPreview: responseText.substring(0, 500),
+      });
+      throw new Error(
+        `Terminology server returned unexpected response (not JSON). ` +
+        `Status: ${response.status}, Content-Type: ${response.headers.get('content-type')}. ` +
+        `This may indicate rate limiting, server overload, or a proxy error.`
+      );
+    }
+    
+    data = JSON.parse(responseText);
+  } catch (parseError: any) {
+    if (parseError.message?.includes('not JSON') || parseError.message?.includes('unexpected response')) {
+      throw parseError; // Re-throw our custom error
+    }
+    console.error('Failed to parse terminology server response as JSON:', parseError);
+    throw new Error(
+      `Failed to parse terminology server response: ${parseError.message}. ` +
+      `The server may be returning an error page or rate limiting response.`
+    );
+  }
 
   // Extract concepts
   const concepts: SnomedConcept[] = [];
