@@ -5,7 +5,7 @@
  * - RATE_LIMIT_PER_SECOND: Maximum requests per second (uses token bucket)
  */
 
-const MAX_CONCURRENT = 5;
+const MAX_CONCURRENT = 2;
 const RATE_LIMIT_PER_SECOND = 10;
 const TOKEN_REFILL_INTERVAL_MS = 1000 / RATE_LIMIT_PER_SECOND; // 100ms per token
 

@@ -242,8 +242,8 @@ export default function BatchExtractor() {
       
       console.log(`Deduplication: ${totalInstanceCount} ValueSet instances -> ${totalUniqueValueSets} unique code sets`);
 
-      // Step 3: Expand unique hashes in parallel (5 concurrent)
-      const CONCURRENCY = 5;
+      // Step 3: Expand unique hashes in parallel (2 concurrent)
+      const CONCURRENCY = 2;
       const expandedByHash = new Map<string, any>(); // hash -> expansion result
       let completedCount = 0;
 
