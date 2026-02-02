@@ -773,10 +773,39 @@ export async function POST(request: NextRequest) {
     const allConceptsMap = new Map<string, any>();
 
     if (valueSetMapping && valueSetMapping.length > 0) {
-      // Expand each ValueSet separately
-      for (const mapping of valueSetMapping) {
+      // OPTIMIZATION: Group ValueSets by hash and expand each unique hash only once
+      // Then propagate results to all ValueSets with the same hash
+      
+      // Step 1: Pre-compute hash for each mapping
+      const mappingWithHash = valueSetMapping.map((mapping: any) => {
+        const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
+        const xmlCodes = [...vsOriginalParentCodes].sort();
+        const hash = generateValueSetHash(xmlCodes);
+        return { mapping, hash, originalCodes: vsOriginalParentCodes };
+      });
+
+      // Step 2: Group by hash
+      const hashGroups = new Map<string, typeof mappingWithHash>();
+      for (const item of mappingWithHash) {
+        if (!hashGroups.has(item.hash)) {
+          hashGroups.set(item.hash, []);
+        }
+        hashGroups.get(item.hash)!.push(item);
+      }
+
+      console.log(`Optimization: ${valueSetMapping.length} ValueSets grouped into ${hashGroups.size} unique code sets`);
+
+      // Step 3: Expand each unique hash once
+      const expandedByHash = new Map<string, ValueSetGroup>();
+      
+      for (const [hash, items] of hashGroups) {
+        // Use the first mapping in the group as the template for expansion
+        const firstItem = items[0];
+        
+        console.log(`Expanding hash ${hash} (${items.length} ValueSet(s) share this code set)...`);
+        
         const valueSetGroup = await expandSingleValueSet(
-          mapping,
+          firstItem.mapping,
           parentCodes,
           displayNames,
           includeChildren,
@@ -789,13 +818,37 @@ export async function POST(request: NextRequest) {
           allConceptsMap
         );
 
-        valueSetGroups.push(valueSetGroup);
+        expandedByHash.set(hash, valueSetGroup);
 
-        // Small delay between ValueSet expansions to avoid rate limiting
-        if (mapping !== valueSetMapping[valueSetMapping.length - 1]) {
+        // Small delay between unique hash expansions to avoid rate limiting
+        if (expandedByHash.size < hashGroups.size) {
           await new Promise(resolve => setTimeout(resolve, 10));
         }
       }
+
+      // Step 4: Propagate results to all ValueSets with the same hash
+      for (const item of mappingWithHash) {
+        const templateGroup = expandedByHash.get(item.hash)!;
+        
+        if (item === mappingWithHash.find(m => m.hash === item.hash)) {
+          // This is the first (already expanded) ValueSet for this hash
+          valueSetGroups.push(templateGroup);
+        } else {
+          // Clone the template with this ValueSet's specific metadata
+          const clonedGroup: ValueSetGroup = {
+            ...templateGroup,
+            valueSetIndex: item.mapping.valueSetIndex,
+            valueSetFriendlyName: generateValueSetFriendlyName(featureName, item.mapping.valueSetIndex),
+            valueSetId: generateValueSetId(featureId, item.hash, item.mapping.valueSetIndex),
+            valueSetUniqueName: generateValueSetId(featureId, item.hash, item.mapping.valueSetIndex),
+            // Concepts, sqlFormattedCodes, eclExpression, etc. are shared
+          };
+          valueSetGroups.push(clonedGroup);
+        }
+      }
+
+      // Sort by original valueSetIndex to maintain order
+      valueSetGroups.sort((a, b) => a.valueSetIndex - b.valueSetIndex);
     } else {
       // No ValueSet mapping - expand all codes together (legacy behavior)
       const BATCH_SIZE = 50;
