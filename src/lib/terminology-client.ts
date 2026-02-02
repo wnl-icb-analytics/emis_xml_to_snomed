@@ -2,6 +2,7 @@ import { getAccessToken } from './oauth-client';
 import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode, EquivalenceFilter } from './types';
 import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
 import { handleFhirResponse } from './fhir-error-handler';
+import { withConcurrencyLimit } from './concurrency';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
@@ -162,6 +163,8 @@ export async function translateEmisCodeToSnomed(
  * Batch translates EMIS codes to SNOMED using ConceptMap
  * Accepts mappings based on the equivalence filter setting
  * Returns a map of EMIS code -> TranslatedCode (with display name)
+ * 
+ * Uses concurrency limiter for rate limiting (5 concurrent, 10/sec max)
  */
 export async function translateEmisCodesToSnomed(
   emisCodes: string[],
@@ -173,32 +176,23 @@ export async function translateEmisCodesToSnomed(
 
   console.log(`Translating ${uniqueCodes.length} unique EMIS codes to SNOMED (filter: ${equivalenceFilter}, accepting: ${acceptedEquivalences.join(', ')})...`);
 
-  const BATCH_SIZE = 10;
   let successCount = 0;
   let failureCount = 0;
-  let rejectedCount = 0;
 
-  for (let i = 0; i < uniqueCodes.length; i += BATCH_SIZE) {
-    const batch = uniqueCodes.slice(i, i + BATCH_SIZE);
-
-    const promises = batch.map(async (emisCode) => {
+  // Use concurrency limiter instead of manual batching
+  const promises = uniqueCodes.map(emisCode => 
+    withConcurrencyLimit(async () => {
       const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter);
       if (translatedCode) {
         mapping.set(emisCode, translatedCode);
         successCount++;
       } else {
-        // Could be 404 or rejected equivalence
         failureCount++;
       }
-    });
+    })
+  );
 
-    await Promise.all(promises);
-
-    // Small delay between batches
-    if (i + BATCH_SIZE < uniqueCodes.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-  }
+  await Promise.all(promises);
 
   console.log(`ConceptMap translation complete: ${successCount} successful, ${failureCount} failed/rejected (equivalence filter: ${equivalenceFilter}, accepted: ${acceptedEquivalences.join(', ')})`);
 
@@ -330,6 +324,8 @@ export async function resolveHistoricalConcept(
 /**
  * Batch resolves historical concepts to current concepts
  * Returns a map of original concept ID -> current concept ID
+ * 
+ * Uses concurrency limiter for rate limiting (5 concurrent, 10/sec max)
  */
 export async function resolveHistoricalConcepts(
   conceptIds: string[]
@@ -339,27 +335,20 @@ export async function resolveHistoricalConcepts(
 
   console.log(`Checking ${uniqueIds.length} concepts for historical associations...`);
 
-  const BATCH_SIZE = 10;
   let historicalCount = 0;
 
-  for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
-    const batch = uniqueIds.slice(i, i + BATCH_SIZE);
-
-    const promises = batch.map(async (conceptId) => {
+  // Use concurrency limiter instead of manual batching
+  const promises = uniqueIds.map(conceptId =>
+    withConcurrencyLimit(async () => {
       const result = await resolveHistoricalConcept(conceptId);
       mapping.set(conceptId, result.currentConceptId);
       if (result.isHistorical) {
         historicalCount++;
       }
-    });
+    })
+  );
 
-    await Promise.all(promises);
-
-    // Small delay between batches
-    if (i + BATCH_SIZE < uniqueIds.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-  }
+  await Promise.all(promises);
 
   console.log(`Historical resolution complete: ${historicalCount} historical concepts updated`);
 
@@ -375,7 +364,9 @@ export async function expandEclQuery(
     return [];
   }
   
-  const token = await getAccessToken();
+  // Use concurrency limiter for rate limiting
+  return withConcurrencyLimit(async () => {
+    const token = await getAccessToken();
 
   // URL encode the ECL expression
   // Match Snowflake implementation exactly:
@@ -480,4 +471,5 @@ export async function expandEclQuery(
 
   // Return empty array if no expansion - parent codes will be added by caller
   return concepts;
+  }); // End withConcurrencyLimit
 }

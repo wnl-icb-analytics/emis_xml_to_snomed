@@ -327,11 +327,7 @@ async function expandSingleValueSet(
           const batchConcepts = await expandEclQuery(batchEclExpression);
           console.log(`  -> Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(valuesForEcl.length / BATCH_SIZE)}: Got ${batchConcepts.length} concepts`);
           vsConcepts.push(...batchConcepts);
-
-          // Small delay between batches to avoid rate limiting
-          if (i + BATCH_SIZE < valuesForEcl.length) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+          // Note: Rate limiting handled by concurrency limiter in expandEclQuery
         } catch (error) {
           // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
           // But if they do, allow them (code not found is acceptable)
@@ -795,10 +791,11 @@ export async function POST(request: NextRequest) {
 
       console.log(`Optimization: ${valueSetMapping.length} ValueSets grouped into ${hashGroups.size} unique code sets`);
 
-      // Step 3: Expand each unique hash once
+      // Step 3: Expand each unique hash in parallel (concurrency limiter handles rate limiting)
       const expandedByHash = new Map<string, ValueSetGroup>();
+      const hashEntries = Array.from(hashGroups.entries());
       
-      for (const [hash, items] of hashGroups) {
+      const expansionPromises = hashEntries.map(async ([hash, items]) => {
         // Use the first mapping in the group as the template for expansion
         const firstItem = items[0];
         
@@ -818,12 +815,12 @@ export async function POST(request: NextRequest) {
           allConceptsMap
         );
 
-        expandedByHash.set(hash, valueSetGroup);
+        return { hash, valueSetGroup };
+      });
 
-        // Small delay between unique hash expansions to avoid rate limiting
-        if (expandedByHash.size < hashGroups.size) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
+      const expansionResults = await Promise.all(expansionPromises);
+      for (const { hash, valueSetGroup } of expansionResults) {
+        expandedByHash.set(hash, valueSetGroup);
       }
 
       // Step 4: Propagate results to all ValueSets with the same hash
@@ -903,10 +900,7 @@ export async function POST(request: NextRequest) {
           try {
             const batchConcepts = await expandEclQuery(eclExpression);
             expandedConcepts.push(...batchConcepts);
-
-            if (i + BATCH_SIZE < valuesForEcl.length) {
-              await new Promise(resolve => setTimeout(resolve, 10));
-            }
+            // Note: Rate limiting handled by concurrency limiter in expandEclQuery
           } catch (error) {
             // 404 errors are handled by handleFhirResponse and return empty array, so they shouldn't reach here
             // But if they do, allow them (code not found is acceptable)
