@@ -179,21 +179,22 @@ export default function BatchExtractor() {
     let extractionCompleted = false;
     try {
       const totalReports = selectedReports.length;
-      let completedReports = 0;
 
-      for (const report of selectedReports) {
-        // Check if extraction was cancelled
-        if (cancellationRef.current) {
-          setStatus('idle');
-          setProcessingStatus(null);
-          setIsExtracting(false);
-          setContextIsExtracting(false);
-          return;
-        }
-        completedReports++;
-        const totalValueSets = report.valueSets.length;
-
-        // Add report row to reports table (equivalence filter setting will be added after first ValueSet expansion)
+      // Build flat list of all ValueSet tasks for parallel processing
+      interface ValueSetTask {
+        report: EmisReport;
+        reportIndex: number;
+        vsIndex: number;
+        vs: any;
+        dedupIndex: number;
+      }
+      
+      const allTasks: ValueSetTask[] = [];
+      for (let reportIndex = 0; reportIndex < selectedReports.length; reportIndex++) {
+        const report = selectedReports[reportIndex];
+        const dedupMap = buildDeduplicatedIndexMap(report.valueSets);
+        
+        // Add report row to reports table
         const reportRow = {
           report_id: report.id,
           report_xml_id: report.xmlId,
@@ -204,129 +205,79 @@ export default function BatchExtractor() {
           parent_report_id: report.parentReportId || '',
           folder_path: report.rule,
           xml_file_name: report.rule.split(' > ')[0] || 'unknown.xml',
-          equivalence_filter_setting: equivalenceFilter, // Use current setting
+          equivalence_filter_setting: equivalenceFilter,
           parsed_at: new Date().toISOString(),
         };
         normalizedData.reports.push(reportRow);
-
-        // Process each ValueSet in the report
-        let completedValueSets = 0;
-        const dedupMap = buildDeduplicatedIndexMap(report.valueSets);
-
-        for (const [vsIndex, vs] of report.valueSets.entries()) {
-          completedValueSets++;
-          const valueSetStartTime = Date.now();
-
-          setProcessingStatus({
-            currentReport: completedReports,
-            totalReports,
-            reportName: report.searchName,
-            currentValueSet: completedValueSets,
-            totalValueSets,
-            message: `Processing ValueSet ${completedValueSets} of ${totalValueSets}`,
+        
+        for (let vsIndex = 0; vsIndex < report.valueSets.length; vsIndex++) {
+          allTasks.push({
+            report,
+            reportIndex,
+            vsIndex,
+            vs: report.valueSets[vsIndex],
+            dedupIndex: dedupMap.get(vsIndex) ?? vsIndex,
           });
+        }
+      }
 
-          // Check if extraction was cancelled before each API call
-          if (cancellationRef.current) {
-            setStatus('idle');
-            setProcessingStatus(null);
-            setIsExtracting(false);
-            setContextIsExtracting(false);
-            return;
-          }
+      const totalValueSetsCount = allTasks.length;
+      let completedCount = 0;
 
+      // Process ValueSets in parallel with concurrency limit (5 concurrent)
+      const CONCURRENCY = 5;
+      const results: Array<{ task: ValueSetTask; result: any; error?: Error }> = [];
+      
+      // Process in chunks to maintain some ordering for progress display
+      for (let i = 0; i < allTasks.length; i += CONCURRENCY) {
+        // Check cancellation
+        if (cancellationRef.current) {
+          setStatus('idle');
+          setProcessingStatus(null);
+          setIsExtracting(false);
+          setContextIsExtracting(false);
+          return;
+        }
+
+        const chunk = allTasks.slice(i, i + CONCURRENCY);
+        
+        // Update status to show current batch
+        const firstTask = chunk[0];
+        setProcessingStatus({
+          currentReport: firstTask.reportIndex + 1,
+          totalReports,
+          reportName: firstTask.report.searchName,
+          currentValueSet: completedCount + 1,
+          totalValueSets: totalValueSetsCount,
+          message: `Processing ${chunk.length} ValueSets in parallel (${completedCount + 1}-${Math.min(completedCount + chunk.length, totalValueSetsCount)} of ${totalValueSetsCount})`,
+        });
+
+        // Process chunk in parallel
+        const chunkPromises = chunk.map(async (task) => {
           try {
-            // Use shared utility to expand the ValueSet (deduplicated index for consistent naming)
-            const dedupIndex = dedupMap.get(vsIndex) ?? vsIndex;
             const result = await expandValueSet(
-              report.id,
-              report.name,
-              vs,
-              dedupIndex,
+              task.report.id,
+              task.report.name,
+              task.vs,
+              task.dedupIndex,
               equivalenceFilter
             );
-
-            if (result.success && result.data && result.data.valueSetGroups) {
-              const group = result.data.valueSetGroups[0];
-
-              if (group) {
-                // Add valueset row
-                normalizedData.valuesets.push({
-                  valueset_id: group.valueSetId,
-                  report_id: report.id,
-                  valueset_index: group.valueSetIndex,
-                  valueset_hash: group.valueSetHash,
-                  valueset_friendly_name: group.valueSetFriendlyName,
-                  code_system: group.originalCodes?.[0]?.codeSystem || '',
-                  ecl_expression: group.eclExpression || '',
-                  expansion_error: group.expansionError || '',
-                  expanded_at: result.data.expandedAt,
-                });
-
-                // Add original codes
-                group.originalCodes?.forEach((oc: any, idx: number) => {
-                  normalizedData.originalCodes.push({
-                    original_code_id: `${group.valueSetId}-oc${idx}`,
-                    valueset_id: group.valueSetId,
-                    original_code: oc.originalCode,
-                    display_name: oc.displayName,
-                    code_system: oc.codeSystem,
-                    include_children: oc.includeChildren || false,
-                    is_refset: oc.isRefset || false,
-                    translated_to_snomed_code: oc.translatedTo || '',
-                    translated_to_display: oc.translatedToDisplay || '',
-                  });
-                });
-
-                // Add expanded concepts
-                const parentCodesSet = new Set(group.parentCodes || []);
-                group.concepts?.forEach((concept: any, idx: number) => {
-                  normalizedData.expandedConcepts.push({
-                    concept_id: `${group.valueSetId}-c${idx}`,
-                    valueset_id: group.valueSetId,
-                    snomed_code: concept.code,
-                    display: concept.display,
-                    source: concept.source || 'terminology_server', // Use actual source (rf2_file or terminology_server)
-                    exclude_children: concept.excludeChildren || false,
-                    is_descendant: !parentCodesSet.has(concept.code),
-                  });
-                });
-
-                // Add failed codes
-                group.failedCodes?.forEach((failed: any, idx: number) => {
-                  normalizedData.failedCodes.push({
-                    failed_code_id: `${group.valueSetId}-failed${idx}`,
-                    valueset_id: group.valueSetId,
-                    original_code: failed.originalCode,
-                    display_name: failed.displayName,
-                    code_system: failed.codeSystem,
-                    reason: failed.reason,
-                  });
-                });
-
-                // Add exceptions (using data from API response with translation info)
-                group.exceptions?.forEach((exception: any, excIdx: number) => {
-                  normalizedData.exceptions.push({
-                    exception_id: `${group.valueSetId}-exc${excIdx}`,
-                    valueset_id: group.valueSetId,
-                    original_excluded_code: exception.originalExcludedCode,
-                    translated_to_snomed_code: exception.translatedToSnomedCode || '',
-                    included_in_ecl: exception.includedInEcl || false,
-                    translation_error: exception.translationError || '',
-                  });
-                });
-              }
-            }
+            return { task, result, error: undefined };
           } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            
-            // Import FhirApiError check (we'll need to add the import)
-            const isFhirApiError = error instanceof Error && 
-              (error as any).name === 'FhirApiError';
+            return { task, result: null, error: error as Error };
+          }
+        });
+
+        const chunkResults = await Promise.all(chunkPromises);
+        
+        // Process results and check for serious errors
+        for (const { task, result, error } of chunkResults) {
+          if (error) {
+            const errorMessage = error.message || String(error);
+            const isFhirApiError = (error as any).name === 'FhirApiError';
             const is404Error = isFhirApiError && (error as any).status === 404;
             
-            // Check if this is a network error or other serious error (not 404)
-            const isNetworkError = error instanceof Error && (
+            const isNetworkError = (
               errorMessage.includes('Network error') ||
               errorMessage.includes('timeout') ||
               errorMessage.includes('Unable to connect') ||
@@ -337,53 +288,105 @@ export default function BatchExtractor() {
             const isSeriousError = isNetworkError || (isFhirApiError && !is404Error);
 
             if (isSeriousError) {
-              console.error(`Error expanding ValueSet ${vsIndex} in report ${report.name}:`, error);
-              // For network errors and other serious API errors (401, 403, 5xx, etc.), stop the extraction
-              // This prevents creating ValueSets with failed codes when there's a real error
-              // 404 errors are acceptable (code not found) and should continue
-              throw new Error(`Error while expanding ValueSet ${vsIndex + 1} in report "${report.name}": ${errorMessage}. Please check your connection and try again.`);
+              console.error(`Error expanding ValueSet ${task.vsIndex} in report ${task.report.name}:`, error);
+              throw new Error(`Error while expanding ValueSet ${task.vsIndex + 1} in report "${task.report.name}": ${errorMessage}. Please check your connection and try again.`);
             } else if (is404Error) {
-              // 404 errors are acceptable - code not found, continue with other ValueSets
-              console.warn(`ValueSet ${vsIndex} in report ${report.name} returned 404 (code not found), continuing...`);
-              // Continue processing other ValueSets
+              console.warn(`ValueSet ${task.vsIndex} in report ${task.report.name} returned 404 (code not found), continuing...`);
             } else {
-              console.error(`Error expanding ValueSet ${vsIndex} in report ${report.name}:`, error);
-              // For unexpected errors, also stop to be safe
+              console.error(`Error expanding ValueSet ${task.vsIndex} in report ${task.report.name}:`, error);
               throw error;
             }
-          }
+          } else if (result?.success && result?.data?.valueSetGroups) {
+            const group = result.data.valueSetGroups[0];
 
-          // Calculate remaining time based on overall average (total elapsed / completed valuesets)
-          // This is more stable than rolling average and accounts for all valuesets, not just recent ones
-          if (startTimeRef.current) {
-            const elapsedSeconds = (Date.now() - startTimeRef.current) / 1000;
-            const totalValueSetsCount = selectedReports.reduce((sum, r) => sum + r.valueSets.length, 0);
+            if (group) {
+              // Add valueset row
+              normalizedData.valuesets.push({
+                valueset_id: group.valueSetId,
+                report_id: task.report.id,
+                valueset_index: group.valueSetIndex,
+                valueset_hash: group.valueSetHash,
+                valueset_friendly_name: group.valueSetFriendlyName,
+                code_system: group.originalCodes?.[0]?.codeSystem || '',
+                ecl_expression: group.eclExpression || '',
+                expansion_error: group.expansionError || '',
+                expanded_at: result.data.expandedAt,
+              });
 
-            // Calculate how many valuesets we've completed so far
-            let completedValueSetsCount = 0;
-            for (let i = 0; i < completedReports - 1; i++) {
-              completedValueSetsCount += selectedReports[i]?.valueSets.length || 0;
+              // Add original codes
+              group.originalCodes?.forEach((oc: any, idx: number) => {
+                normalizedData.originalCodes.push({
+                  original_code_id: `${group.valueSetId}-oc${idx}`,
+                  valueset_id: group.valueSetId,
+                  original_code: oc.originalCode,
+                  display_name: oc.displayName,
+                  code_system: oc.codeSystem,
+                  include_children: oc.includeChildren || false,
+                  is_refset: oc.isRefset || false,
+                  translated_to_snomed_code: oc.translatedTo || '',
+                  translated_to_display: oc.translatedToDisplay || '',
+                });
+              });
+
+              // Add expanded concepts
+              const parentCodesSet = new Set(group.parentCodes || []);
+              group.concepts?.forEach((concept: any, idx: number) => {
+                normalizedData.expandedConcepts.push({
+                  concept_id: `${group.valueSetId}-c${idx}`,
+                  valueset_id: group.valueSetId,
+                  snomed_code: concept.code,
+                  display: concept.display,
+                  source: concept.source || 'terminology_server',
+                  exclude_children: concept.excludeChildren || false,
+                  is_descendant: !parentCodesSet.has(concept.code),
+                });
+              });
+
+              // Add failed codes
+              group.failedCodes?.forEach((failed: any, idx: number) => {
+                normalizedData.failedCodes.push({
+                  failed_code_id: `${group.valueSetId}-failed${idx}`,
+                  valueset_id: group.valueSetId,
+                  original_code: failed.originalCode,
+                  display_name: failed.displayName,
+                  code_system: failed.codeSystem,
+                  reason: failed.reason,
+                });
+              });
+
+              // Add exceptions
+              group.exceptions?.forEach((exception: any, excIdx: number) => {
+                normalizedData.exceptions.push({
+                  exception_id: `${group.valueSetId}-exc${excIdx}`,
+                  valueset_id: group.valueSetId,
+                  original_excluded_code: exception.originalExcludedCode,
+                  translated_to_snomed_code: exception.translatedToSnomedCode || '',
+                  included_in_ecl: exception.includedInEcl || false,
+                  translation_error: exception.translationError || '',
+                });
+              });
             }
-            completedValueSetsCount += completedValueSets; // Add completed valuesets in current report
-
-            if (completedValueSetsCount > 0) {
-              // Average time per valueset = total elapsed time / completed valuesets
-              const avgTimePerValueSet = elapsedSeconds / completedValueSetsCount;
-              const remainingValueSets = totalValueSetsCount - completedValueSetsCount;
-
-              if (remainingValueSets > 0) {
-                const estimatedSecondsRemaining = Math.ceil(remainingValueSets * avgTimePerValueSet);
-                setRemainingTime(Math.max(0, estimatedSecondsRemaining));
-              } else {
-                setRemainingTime(0);
-              }
-            }
           }
-
-          // Update progress
-          const totalProgress = ((completedReports - 1) / totalReports + (completedValueSets / totalValueSets) / totalReports) * 100;
-          setProgress(Math.round(totalProgress));
         }
+
+        // Update progress after chunk completes
+        completedCount += chunk.length;
+        
+        if (startTimeRef.current && completedCount > 0) {
+          const elapsedSeconds = (Date.now() - startTimeRef.current) / 1000;
+          const avgTimePerValueSet = elapsedSeconds / completedCount;
+          const remainingValueSets = totalValueSetsCount - completedCount;
+
+          if (remainingValueSets > 0) {
+            const estimatedSecondsRemaining = Math.ceil(remainingValueSets * avgTimePerValueSet);
+            setRemainingTime(Math.max(0, estimatedSecondsRemaining));
+          } else {
+            setRemainingTime(0);
+          }
+        }
+
+        const totalProgress = (completedCount / totalValueSetsCount) * 100;
+        setProgress(Math.round(totalProgress));
       }
 
       setExtractedData(normalizedData);
