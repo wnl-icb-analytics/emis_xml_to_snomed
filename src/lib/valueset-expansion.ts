@@ -69,7 +69,45 @@ export async function expandValueSet(
     }),
   });
 
-  const data = await response.json();
+  // Safely parse response - handle non-JSON responses (timeouts, HTML error pages, etc.)
+  let data: any;
+  try {
+    const responseText = await response.text();
+
+    // Check if response looks like JSON before parsing
+    if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
+      console.error('API returned non-JSON response:', {
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type'),
+        bodyPreview: responseText.substring(0, 500),
+      });
+
+      // Provide helpful error message based on status code
+      if (response.status === 504 || response.status === 408) {
+        throw new Error(`Request timeout (${response.status}). The terminology server may be overloaded. Try again in a few minutes.`);
+      } else if (response.status === 429) {
+        throw new Error('Rate limited by server. Please wait a moment and try again.');
+      } else if (response.status >= 500) {
+        throw new Error(`Server error (${response.status}). The terminology server may be experiencing issues.`);
+      } else {
+        throw new Error(`Unexpected response from server (${response.status}). Please try again.`);
+      }
+    }
+
+    data = JSON.parse(responseText);
+  } catch (parseError: any) {
+    // Re-throw if it's our custom error
+    if (parseError.message?.includes('timeout') ||
+        parseError.message?.includes('Rate limited') ||
+        parseError.message?.includes('Server error') ||
+        parseError.message?.includes('Unexpected response')) {
+      throw parseError;
+    }
+
+    console.error('Failed to parse API response:', parseError);
+    throw new Error(`Failed to parse server response: ${parseError.message}. The server may be overloaded or experiencing issues.`);
+  }
 
   if (!response.ok || !data.success) {
     // Preserve the error message from the API route

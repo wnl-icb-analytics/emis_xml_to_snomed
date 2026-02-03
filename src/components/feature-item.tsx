@@ -64,7 +64,41 @@ export default function FeatureItem({
         }),
       });
 
-      const result = await response.json();
+      // Safely parse response - handle non-JSON responses (timeouts, HTML error pages, etc.)
+      let result: any;
+      try {
+        const responseText = await response.text();
+
+        // Check if response looks like JSON before parsing
+        if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
+          console.error('API returned non-JSON response:', {
+            status: response.status,
+            statusText: response.statusText,
+            contentType: response.headers.get('content-type'),
+            bodyPreview: responseText.substring(0, 500),
+          });
+
+          if (response.status === 504 || response.status === 408) {
+            throw new Error(`Request timeout (${response.status}). The terminology server may be overloaded.`);
+          } else if (response.status === 429) {
+            throw new Error('Rate limited. Please wait and try again.');
+          } else if (response.status >= 500) {
+            throw new Error(`Server error (${response.status}).`);
+          } else {
+            throw new Error(`Unexpected response (${response.status}).`);
+          }
+        }
+
+        result = JSON.parse(responseText);
+      } catch (parseError: any) {
+        if (parseError.message?.includes('timeout') ||
+            parseError.message?.includes('Rate limited') ||
+            parseError.message?.includes('Server error') ||
+            parseError.message?.includes('Unexpected response')) {
+          throw parseError;
+        }
+        throw new Error(`Failed to parse response: ${parseError.message}`);
+      }
 
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to expand codes');

@@ -289,28 +289,54 @@ export default function BatchExtractor() {
         });
 
         const chunkResults = await Promise.all(chunkPromises);
-        
+
         // Check for serious errors
         for (const { hash, result, error } of chunkResults) {
           if (error) {
             const errorMessage = error.message || String(error);
             const isFhirApiError = (error as any).name === 'FhirApiError';
             const is404Error = isFhirApiError && (error as any).status === 404;
-            
+
+            // Detect different error categories
+            const isTimeoutError = (
+              errorMessage.toLowerCase().includes('timeout') ||
+              errorMessage.includes('did not respond') ||
+              errorMessage.includes('504') ||
+              errorMessage.includes('408')
+            );
+
+            const isRateLimitError = (
+              errorMessage.toLowerCase().includes('rate limit') ||
+              errorMessage.includes('429')
+            );
+
+            const isServerError = (
+              errorMessage.toLowerCase().includes('server error') ||
+              errorMessage.includes('500') ||
+              errorMessage.includes('502') ||
+              errorMessage.includes('503')
+            );
+
             const isNetworkError = (
               errorMessage.includes('Network error') ||
-              errorMessage.includes('timeout') ||
               errorMessage.includes('Unable to connect') ||
-              errorMessage.includes('did not respond') ||
-              errorMessage.includes('internet connection')
+              errorMessage.includes('internet connection') ||
+              errorMessage.toLowerCase().includes('fetch')
             );
-            
-            const isSeriousError = isNetworkError || (isFhirApiError && !is404Error);
+
+            const isUnexpectedResponse = (
+              errorMessage.toLowerCase().includes('unexpected response') ||
+              errorMessage.toLowerCase().includes('failed to parse')
+            );
+
+            const isSeriousError = isTimeoutError || isRateLimitError || isServerError || isNetworkError || isUnexpectedResponse || (isFhirApiError && !is404Error);
 
             if (isSeriousError) {
               const instances = hashGroups.get(hash)!;
               console.error(`Error expanding ValueSet hash ${hash}:`, error);
-              throw new Error(`Error while expanding ValueSet (hash: ${hash}, used by ${instances.length} reports): ${errorMessage}. Please check your connection and try again.`);
+
+              // Preserve original error message (which now has helpful context)
+              throw new Error(errorMessage);
             } else if (is404Error) {
               console.warn(`ValueSet hash ${hash} returned 404 (code not found), continuing...`);
             } else {
@@ -726,11 +752,77 @@ export default function BatchExtractor() {
           <CardContent className="pt-6">
             <div className="flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
-              <div>
+              <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-destructive mb-1">Extraction Failed</h3>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground mb-3">
                   {errorMessage || 'An error occurred while processing the reports. Please try again.'}
                 </p>
+                {/* Show helpful tips based on error type */}
+                {errorMessage && (
+                  <div className="bg-muted/50 rounded-md p-3 text-xs space-y-1">
+                    {errorMessage.toLowerCase().includes('timeout') && (
+                      <>
+                        <p className="font-medium">Suggestions:</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>The terminology server may be overloaded - wait a few minutes and try again</li>
+                          <li>Try selecting fewer reports to process at once</li>
+                          <li>Large ValueSets with many codes take longer to expand</li>
+                        </ul>
+                      </>
+                    )}
+                    {errorMessage.toLowerCase().includes('rate limit') && (
+                      <>
+                        <p className="font-medium">Suggestions:</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>The server has temporarily blocked requests - wait 1-2 minutes</li>
+                          <li>Processing will resume automatically if you try again</li>
+                        </ul>
+                      </>
+                    )}
+                    {(errorMessage.toLowerCase().includes('server error') || errorMessage.toLowerCase().includes('500')) && (
+                      <>
+                        <p className="font-medium">Suggestions:</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>The terminology server is experiencing issues</li>
+                          <li>Try again in a few minutes</li>
+                          <li>If the problem persists, check server status</li>
+                        </ul>
+                      </>
+                    )}
+                    {(errorMessage.toLowerCase().includes('network') || errorMessage.toLowerCase().includes('connect')) && (
+                      <>
+                        <p className="font-medium">Suggestions:</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>Check your internet connection</li>
+                          <li>The terminology server may be unreachable</li>
+                          <li>Try refreshing the page and starting again</li>
+                        </ul>
+                      </>
+                    )}
+                    {errorMessage.toLowerCase().includes('unexpected response') && (
+                      <>
+                        <p className="font-medium">Suggestions:</p>
+                        <ul className="list-disc list-inside text-muted-foreground space-y-0.5">
+                          <li>The server returned an invalid response</li>
+                          <li>This may indicate server maintenance or a configuration issue</li>
+                          <li>Try again in a few minutes</li>
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => {
+                    setStatus('idle');
+                    setErrorMessage('');
+                    setProgress(0);
+                  }}
+                >
+                  Dismiss
+                </Button>
               </div>
             </div>
           </CardContent>
