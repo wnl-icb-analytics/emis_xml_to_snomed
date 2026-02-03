@@ -242,12 +242,12 @@ export default function BatchExtractor() {
       
       console.log(`Deduplication: ${totalInstanceCount} ValueSet instances -> ${totalUniqueValueSets} unique code sets`);
 
-      // Step 3: Expand unique hashes in parallel (2 concurrent)
-      const CONCURRENCY = 2;
+      // Step 3: Expand unique hashes sequentially with 10ms gap to avoid overwhelming server
+      const REQUEST_DELAY_MS = 10;
       const expandedByHash = new Map<string, any>(); // hash -> expansion result
       let completedCount = 0;
 
-      for (let i = 0; i < uniqueHashes.length; i += CONCURRENCY) {
+      for (const hash of uniqueHashes) {
         // Check cancellation
         if (cancellationRef.current) {
           setStatus('idle');
@@ -257,38 +257,35 @@ export default function BatchExtractor() {
           return;
         }
 
-        const chunk = uniqueHashes.slice(i, i + CONCURRENCY);
-        
-        // Update status - show unique ValueSets progress, not reports
+        // Update status
         setProcessingStatus({
           currentReport: completedCount + 1,
           totalReports: totalUniqueValueSets,
           reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
           currentValueSet: completedCount + 1,
           totalValueSets: totalUniqueValueSets,
-          message: `Expanding ${Math.min(chunk.length, totalUniqueValueSets - completedCount)} unique ValueSets in parallel`,
+          message: `Expanding ValueSet ${completedCount + 1} of ${totalUniqueValueSets}`,
         });
 
-        // Expand chunk in parallel - use first instance of each hash as template
-        const chunkPromises = chunk.map(async (hash) => {
-          const instances = hashGroups.get(hash)!;
-          const template = instances[0];
-          
-          try {
-            const result = await expandValueSet(
-              template.report.id,
-              template.report.name,
-              template.vs,
-              0, // Index doesn't matter for expansion, only for naming
-              equivalenceFilter
-            );
-            return { hash, result, error: undefined };
-          } catch (error) {
-            return { hash, result: null, error: error as Error };
-          }
-        });
+        // Expand single ValueSet
+        const instances = hashGroups.get(hash)!;
+        const template = instances[0];
 
-        const chunkResults = await Promise.all(chunkPromises);
+        let chunkResult: { hash: string; result: any; error: Error | undefined };
+        try {
+          const result = await expandValueSet(
+            template.report.id,
+            template.report.name,
+            template.vs,
+            0, // Index doesn't matter for expansion, only for naming
+            equivalenceFilter
+          );
+          chunkResult = { hash, result, error: undefined };
+        } catch (error) {
+          chunkResult = { hash, result: null, error: error as Error };
+        }
+
+        const chunkResults = [chunkResult];
 
         // Check for serious errors
         for (const { hash, result, error } of chunkResults) {
@@ -349,8 +346,8 @@ export default function BatchExtractor() {
         }
 
         // Update progress
-        completedCount += chunk.length;
-        
+        completedCount += 1;
+
         if (startTimeRef.current && completedCount > 0) {
           const elapsedSeconds = (Date.now() - startTimeRef.current) / 1000;
           const avgTimePerHash = elapsedSeconds / completedCount;
@@ -366,6 +363,11 @@ export default function BatchExtractor() {
 
         const totalProgress = (completedCount / totalUniqueValueSets) * 100;
         setProgress(Math.round(totalProgress));
+
+        // Add delay between requests to avoid overwhelming the server
+        if (completedCount < totalUniqueValueSets) {
+          await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
+        }
       }
 
       // Step 4: Propagate results to all instances that share each hash
