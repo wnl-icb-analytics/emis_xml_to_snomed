@@ -124,8 +124,29 @@ function friendlyBoundary(b: RangeBoundary | undefined, column?: string): string
     }
 
     // Date columns: relative offset from today
-    if (num < 0) return `within the last ${absNum} ${unitLabel}`;
+    // Operator determines direction relative to the offset point
+    if (num < 0) {
+      // Negative = past offset (e.g., -1 year = 1 year ago)
+      // GT/GTEQ: dates after that point = "within the last X"
+      // LT/LTEQ: dates before that point = "before X ago"
+      if (op === 'LT') {
+        return `before ${absNum} ${unitLabel} ago`;
+      }
+      if (op === 'LTEQ') {
+        return `on or before ${absNum} ${unitLabel} ago`;
+      }
+      return `within the last ${absNum} ${unitLabel}`;
+    }
     if (num === 0) return `${friendlyOp(op)} now`;
+    // Positive = future offset
+    // LT/LTEQ: dates before that point = "within the next X"
+    // GT/GTEQ: dates after that point = "after X from now"
+    if (op === 'GT') {
+      return `after ${absNum} ${unitLabel} from now`;
+    }
+    if (op === 'GTEQ') {
+      return `on or after ${absNum} ${unitLabel} from now`;
+    }
     return `within the next ${absNum} ${unitLabel}`;
   }
 

@@ -426,27 +426,25 @@ async function expandSingleValueSet(
     refsetName: getRefsetDisplayName(refsetId) || `Refset ${refsetId}`,
   }));
 
-  // Track dm+d codes - SCT_PREP codes that are valid dm+d (namespace 1000033)
-  // These can't be expanded via terminology server (UK Drug Extension not loaded)
-  // but they ARE valid SNOMED codes and should not be flagged as failures
+  // Track NHS dm+d codes - codes with namespace 1000001 (UK Drug Extension)
+  // These are already valid SNOMED codes that came from successful ConceptMap translation
+  // They may not expand if the terminology server doesn't have UK Drug Extension loaded
   const dmdCodes = originalCodesMetadata
     .filter((oc: any) => {
-      // Check if this is a SCT_PREP code that is a valid dm+d code
-      if (oc.codeSystem === 'SCT_PREP' && isDmdCode(oc.originalCode)) {
-        return true;
-      }
-      return false;
+      // Check if this is a valid NHS dm+d code (namespace 1000001)
+      // Note: EMIS codes (namespace 1000033) need ConceptMap translation first
+      return isDmdCode(oc.originalCode) || (oc.translatedTo && isDmdCode(oc.translatedTo));
     })
     .map((oc: any) => ({
       originalCode: oc.originalCode,
       displayName: oc.displayName,
       codeSystem: oc.codeSystem,
       isDmd: true,
-      note: 'Valid dm+d code (SNOMED namespace 1000033). Cannot be expanded - UK Drug Extension not loaded on terminology server.',
+      note: 'Valid NHS dm+d code (SNOMED namespace 1000001). May not expand if UK Drug Extension not loaded on terminology server.',
     }));
 
   if (dmdCodes.length > 0) {
-    console.log(`  Found ${dmdCodes.length} valid dm+d codes (SCT_PREP with namespace 1000033) - not flagging as failures`);
+    console.log(`  Found ${dmdCodes.length} valid NHS dm+d codes (namespace 1000001) - not flagging as failures`);
   }
 
   // Track failed codes - codes that don't appear in expanded concepts
@@ -690,10 +688,13 @@ export async function POST(request: NextRequest) {
     // If translation succeeds -> use translated code
     // If translation fails (404) -> assume already valid SNOMED
     // This handles unreliable codeSystem labels in XML
+    //
+    // NOTE: Codes with EMIS namespace 1000033 need translation to NHS dm+d (namespace 1000001)
+    // Codes that already have NHS dm+d namespace 1000001 don't need translation
 
     console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes (equivalence filter: ${equivalenceFilter})...`);
     const codeToSnomedMap = await translateEmisCodesToSnomed(parentCodes, equivalenceFilter);
-    console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} assumed already SNOMED`);
+    console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} not found in ConceptMap`);
 
     // Log first few translated mappings
     let loggedMappings = 0;

@@ -79,20 +79,23 @@ export function isEmisCodeSystem(codeSystem?: string): boolean {
 }
 
 /**
- * Checks if a SNOMED code is a dm+d code based on namespace
- * dm+d codes use namespace 1000033 (7 digits before the check digit)
+ * Checks if a SNOMED code is a NHS dm+d code based on namespace
+ * NHS dm+d codes use namespace 1000001 (UK Drug Extension)
  * SNOMED CT structure: [item ID][namespace 7 digits][check digit 1 digit]
- * 
- * Examples:
- * - 91941000033117 (Atorvastatin 10mg tablets)
- * - 578641000033114 (Fluvastatin 20mg capsules)
- * - 1336841000033110 (Simvastatin 10mg tablets)
+ *
+ * NOTE: Codes with namespace 1000033 are EMIS-assigned codes that need
+ * ConceptMap translation to NHS dm+d codes (namespace 1000001).
+ *
+ * Examples of NHS dm+d codes (namespace 1000001):
+ * - 13532911000001104 (Dabigatran etexilate 75mg capsules)
+ * - 29903211000001100 (Edoxaban 15mg tablets)
+ * - 14254711000001104 (Rivaroxaban 10mg tablets)
  */
 export function isDmdCode(code: string): boolean {
   if (!code || typeof code !== 'string') return false;
   // Must be numeric, at least 9 digits (1 item + 7 namespace + 1 check)
-  // Namespace 1000033 appears before the final check digit
-  return /^\d+1000033\d$/.test(code);
+  // NHS dm+d namespace 1000001 appears before the final check digit
+  return /^\d+1000001\d{2}$/.test(code);
 }
 
 /**
@@ -102,7 +105,7 @@ export function getDmdCodeInfo(code: string): { isDmd: true; namespace: string; 
   if (!isDmdCode(code)) return null;
   return {
     isDmd: true,
-    namespace: '1000033',
-    type: 'dm+d VMP/AMP', // Could be VMP, AMP, VMPP, or AMPP
+    namespace: '1000001',
+    type: 'NHS dm+d', // UK Drug Extension - VMP, AMP, VMPP, or AMPP
   };
 }

@@ -637,7 +637,15 @@ function CriterionCard({
     const singleVal = cf.singleValue;
 
     // For non-READCODE column filters with ValueSets, show the ValueSet display names as the filter value
+    // Skip DRUG columns - these duplicate the ValueSet display above
     if (cf.valueSets && cf.valueSets.length > 0 && primaryCol.toUpperCase() !== 'READCODE') {
+      // Skip Drug filter entirely - it just repeats the ValueSet contents shown above
+      // Check both column name and displayName since either could indicate a drug filter
+      const isDrugFilter = primaryCol.toUpperCase() === 'DRUG' ||
+                          name.toUpperCase().startsWith('DRUG');
+      if (isDrugFilter) {
+        continue;
+      }
       const vsNames = cf.valueSets.flatMap(vs => vs.values.map(v => v.displayName)).filter(Boolean);
       if (vsNames.length > 0) {
         // Strip parenthetical from label (e.g. "Problem Status (Active, Past...)" → "Problem Status is")
