@@ -2,7 +2,7 @@ import { getAccessToken } from './oauth-client';
 import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode, EquivalenceFilter } from './types';
 import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
 import { handleFhirResponse } from './fhir-error-handler';
-import { withConcurrencyLimit } from './concurrency';
+import { withConcurrencyLimit, withRetry, isRetryableStatus } from './concurrency';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
@@ -42,6 +42,7 @@ export function getConceptMapVersions() {
 /**
  * Attempts translation using a specific ConceptMap ID
  * Returns the translated code if successful, null otherwise
+ * Includes retry logic for transient server errors (502, 503, 504, 429)
  */
 async function tryConceptMapTranslation(
   emisCode: string,
@@ -52,86 +53,88 @@ async function tryConceptMapTranslation(
   const url = `${TERMINOLOGY_SERVER_BASE}/ConceptMap/${conceptMapId}/$translate`;
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json; charset=utf-8',
-        'Content-Type': 'application/fhir+json; charset=utf-8',
-      },
-      body: JSON.stringify({
-        resourceType: 'Parameters',
-        parameter: [
-          {
-            name: 'code',
-            valueCode: emisCode,
-          },
-          {
-            name: 'system',
-            valueUri: EMIS_CODE_SYSTEM,
-          },
-          {
-            name: 'target',
-            valueUri: SNOMED_CODE_SYSTEM,
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
+    return await withRetry(async () => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/fhir+json; charset=utf-8',
+          'Content-Type': 'application/fhir+json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'code', valueCode: emisCode },
+            { name: 'system', valueUri: EMIS_CODE_SYSTEM },
+            { name: 'target', valueUri: SNOMED_CODE_SYSTEM },
+          ],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
 
-    // Handle errors - only 404 should try fallback, other errors should throw
-    const errorResult = await handleFhirResponse(response, {
-      overrides: {
-        404: 'RETURN_NULL', // Code not in this ConceptMap, try fallback
-      },
-      context: `translating code ${emisCode} via ConceptMap ${conceptMapId}`
-    });
+      // Check for retryable HTTP status codes before processing
+      if (isRetryableStatus(response.status)) {
+        throw new Error(
+          `Terminology server returned ${response.status}: Server overloaded or rate limited.`
+        );
+      }
 
-    if (errorResult !== null) {
-      return null; // 404 - try fallback ConceptMap
-    }
+      // Handle errors - only 404 should try fallback, other errors should throw
+      const errorResult = await handleFhirResponse(response, {
+        overrides: { 404: 'RETURN_NULL' },
+        context: `translating code ${emisCode} via ConceptMap ${conceptMapId}`
+      });
 
-    // Safely parse JSON
-    let data: ConceptMapTranslateResponse;
-    try {
-      const responseText = await response.text();
-      if (!responseText.trim().startsWith('{')) {
-        console.warn(`ConceptMap translation returned non-JSON for ${emisCode}:`, responseText.substring(0, 200));
+      if (errorResult !== null) {
+        return null; // 404 - try fallback ConceptMap
+      }
+
+      // Safely parse JSON
+      let data: ConceptMapTranslateResponse;
+      try {
+        const responseText = await response.text();
+        if (!responseText.trim().startsWith('{')) {
+          console.warn(`ConceptMap translation returned non-JSON for ${emisCode}:`, responseText.substring(0, 200));
+          return null;
+        }
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.warn(`Failed to parse ConceptMap response for ${emisCode}:`, parseError);
         return null;
       }
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.warn(`Failed to parse ConceptMap response for ${emisCode}:`, parseError);
-      return null;
-    }
 
-    // Extract the first match from the translation result
-    if (data.parameter) {
-      const resultParam = data.parameter.find((p) => p.name === 'result');
-      if (resultParam?.valueBoolean) {
-        const matchParam = data.parameter.find((p) => p.name === 'match');
-        if (matchParam?.part) {
-          const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
-          const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
+      // Extract the first match from the translation result
+      if (data.parameter) {
+        const resultParam = data.parameter.find((p) => p.name === 'result');
+        if (resultParam?.valueBoolean) {
+          const matchParam = data.parameter.find((p) => p.name === 'match');
+          if (matchParam?.part) {
+            const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
+            const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
 
-          // Check if equivalence matches the configured filter
-          if (equivalence && !acceptedEquivalences.includes(equivalence)) {
-            return null; // Rejected due to equivalence filter - don't log, will try fallback
-          }
+            if (equivalence && !acceptedEquivalences.includes(equivalence)) {
+              return null; // Rejected due to equivalence filter
+            }
 
-          const conceptPart = matchParam.part.find((p) => p.name === 'concept');
-          if (conceptPart?.valueCoding?.code) {
-            return {
-              code: conceptPart.valueCoding.code,
-              display: conceptPart.valueCoding.display,
-              equivalence,
-            };
+            const conceptPart = matchParam.part.find((p) => p.name === 'concept');
+            if (conceptPart?.valueCoding?.code) {
+              return {
+                code: conceptPart.valueCoding.code,
+                display: conceptPart.valueCoding.display,
+                equivalence,
+              };
+            }
           }
         }
       }
-    }
 
-    return null;
+      return null;
+    }, {
+      maxRetries: 3,
+      baseDelayMs: 1000,
+      maxDelayMs: 15000,
+      context: `ConceptMap translation for ${emisCode}`
+    });
   } catch (error) {
     console.warn(`Error translating EMIS code ${emisCode} with ConceptMap ${conceptMapId}:`, error);
     return null;
@@ -223,6 +226,7 @@ export async function translateEmisCodesToSnomed(
 /**
  * Checks if a SNOMED concept is inactive and resolves to current concept if historical
  * Returns the current concept ID or the original if still active
+ * Includes retry logic for transient server errors (502, 503, 504, 429)
  */
 export async function resolveHistoricalConcept(
   conceptId: string
@@ -231,114 +235,108 @@ export async function resolveHistoricalConcept(
   const url = `${TERMINOLOGY_SERVER_BASE}/CodeSystem/$lookup`;
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json; charset=utf-8',
-        'Content-Type': 'application/fhir+json; charset=utf-8',
-      },
-      body: JSON.stringify({
-        resourceType: 'Parameters',
-        parameter: [
-          {
-            name: 'system',
-            valueUri: SNOMED_CODE_SYSTEM,
-          },
-          {
-            name: 'code',
-            valueCode: conceptId,
-          },
-          {
-            name: 'property',
-            valueCode: 'inactive',
-          },
-          {
-            name: 'property',
-            valueCode: 'SAME_AS',
-          },
-          {
-            name: 'property',
-            valueCode: 'REPLACED_BY',
-          },
-          {
-            name: 'property',
-            valueCode: 'POSSIBLY_EQUIVALENT_TO',
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
+    return await withRetry(async () => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/fhir+json; charset=utf-8',
+          'Content-Type': 'application/fhir+json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'system', valueUri: SNOMED_CODE_SYSTEM },
+            { name: 'code', valueCode: conceptId },
+            { name: 'property', valueCode: 'inactive' },
+            { name: 'property', valueCode: 'SAME_AS' },
+            { name: 'property', valueCode: 'REPLACED_BY' },
+            { name: 'property', valueCode: 'POSSIBLY_EQUIVALENT_TO' },
+          ],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
 
-    // Handle errors - 404 returns null (concept not found), other errors should throw
-    const errorResult = await handleFhirResponse(response, {
-      overrides: { 404: 'RETURN_NULL' },
-      context: `looking up historical concept ${conceptId}`
-    });
+      // Check for retryable HTTP status codes before processing
+      if (isRetryableStatus(response.status)) {
+        throw new Error(
+          `Terminology server returned ${response.status}: Server overloaded or rate limited.`
+        );
+      }
 
-    // If handleFhirResponse returned null (404), treat as non-existent/non-historical
-    if (errorResult !== null) {
-      return { currentConceptId: conceptId, isHistorical: false };
-    }
+      // Handle errors - 404 returns null (concept not found), other errors should throw
+      const errorResult = await handleFhirResponse(response, {
+        overrides: { 404: 'RETURN_NULL' },
+        context: `looking up historical concept ${conceptId}`
+      });
 
-    // Safely parse JSON
-    let data: any;
-    try {
-      const responseText = await response.text();
-      if (!responseText.trim().startsWith('{')) {
-        console.warn(`Historical concept lookup returned non-JSON for ${conceptId}:`, responseText.substring(0, 200));
+      if (errorResult !== null) {
         return { currentConceptId: conceptId, isHistorical: false };
       }
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.warn(`Failed to parse historical concept response for ${conceptId}:`, parseError);
-      return { currentConceptId: conceptId, isHistorical: false };
-    }
 
-    // Extract display name
-    let display: string | undefined;
-    const displayParam = data.parameter?.find((p: any) => p.name === 'display');
-    if (displayParam?.valueString) {
-      display = displayParam.valueString;
-    }
-
-    // Check if concept is inactive
-    let isInactive = false;
-    if (data.parameter) {
-      const inactiveProperty = data.parameter.find(
-        (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === 'inactive')
-      );
-      if (inactiveProperty?.part) {
-        const valuePart = inactiveProperty.part.find((p: any) => p.name === 'value');
-        isInactive = valuePart?.valueBoolean === true;
+      // Safely parse JSON
+      let data: any;
+      try {
+        const responseText = await response.text();
+        if (!responseText.trim().startsWith('{')) {
+          console.warn(`Historical concept lookup returned non-JSON for ${conceptId}:`, responseText.substring(0, 200));
+          return { currentConceptId: conceptId, isHistorical: false };
+        }
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.warn(`Failed to parse historical concept response for ${conceptId}:`, parseError);
+        return { currentConceptId: conceptId, isHistorical: false };
       }
-    }
 
-    if (!isInactive) {
-      return { currentConceptId: conceptId, isHistorical: false, display };
-    }
+      // Extract display name
+      let display: string | undefined;
+      const displayParam = data.parameter?.find((p: any) => p.name === 'display');
+      if (displayParam?.valueString) {
+        display = displayParam.valueString;
+      }
 
-    // Concept is inactive - look for historical associations in priority order
-    const associationPriority = ['SAME_AS', 'REPLACED_BY', 'POSSIBLY_EQUIVALENT_TO'];
-
-    for (const associationType of associationPriority) {
+      // Check if concept is inactive
+      let isInactive = false;
       if (data.parameter) {
-        const associationProperty = data.parameter.find(
-          (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === associationType)
+        const inactiveProperty = data.parameter.find(
+          (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === 'inactive')
         );
-        if (associationProperty?.part) {
-          const valuePart = associationProperty.part.find((p: any) => p.name === 'value');
-          if (valuePart?.valueCode) {
-            console.log(`Resolved historical concept ${conceptId} -> ${valuePart.valueCode} (${associationType})`);
-            return { currentConceptId: valuePart.valueCode, isHistorical: true, display };
+        if (inactiveProperty?.part) {
+          const valuePart = inactiveProperty.part.find((p: any) => p.name === 'value');
+          isInactive = valuePart?.valueBoolean === true;
+        }
+      }
+
+      if (!isInactive) {
+        return { currentConceptId: conceptId, isHistorical: false, display };
+      }
+
+      // Concept is inactive - look for historical associations in priority order
+      const associationPriority = ['SAME_AS', 'REPLACED_BY', 'POSSIBLY_EQUIVALENT_TO'];
+
+      for (const associationType of associationPriority) {
+        if (data.parameter) {
+          const associationProperty = data.parameter.find(
+            (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === associationType)
+          );
+          if (associationProperty?.part) {
+            const valuePart = associationProperty.part.find((p: any) => p.name === 'value');
+            if (valuePart?.valueCode) {
+              console.log(`Resolved historical concept ${conceptId} -> ${valuePart.valueCode} (${associationType})`);
+              return { currentConceptId: valuePart.valueCode, isHistorical: true, display };
+            }
           }
         }
       }
-    }
 
-    // No historical association found - return original
-    console.warn(`Concept ${conceptId} is inactive but has no historical association`);
-    return { currentConceptId: conceptId, isHistorical: true, display };
+      console.warn(`Concept ${conceptId} is inactive but has no historical association`);
+      return { currentConceptId: conceptId, isHistorical: true, display };
+    }, {
+      maxRetries: 3,
+      baseDelayMs: 1000,
+      maxDelayMs: 15000,
+      context: `historical concept lookup for ${conceptId}`
+    });
   } catch (error) {
     console.error(`Error resolving historical concept ${conceptId}:`, error);
     return { currentConceptId: conceptId, isHistorical: false };
@@ -387,142 +385,120 @@ export async function expandEclQuery(
     console.warn('Empty ECL expression provided - returning empty result');
     return [];
   }
-  
+
   // Use concurrency limiter for rate limiting
   return withConcurrencyLimit(async () => {
     const token = await getAccessToken();
 
   // URL encode the ECL expression
-  // Match Snowflake implementation exactly:
-  // 1. Python uses: quote(ecl_expression, safe='') from urllib.parse
-  // 2. JavaScript equivalent: encodeURIComponent() (encodes all special chars except: A-Z a-z 0-9 - _ . ! ~ * ' ( ))
-  //    Note: Python's quote with safe='' encodes more aggressively, but encodeURIComponent should work
   const encodedEcl = encodeURIComponent(eclExpression);
   const url = `${TERMINOLOGY_SERVER_BASE}/ValueSet/$expand`;
-  
-  // Construct the URL parameter exactly as Snowflake does: http://snomed.info/sct?fhir_vs=ecl/{encoded_ecl}
+
+  // Construct the URL parameter: http://snomed.info/sct?fhir_vs=ecl/{encoded_ecl}
   const urlParam = `http://snomed.info/sct?fhir_vs=ecl/${encodedEcl}`;
-  
-  // Snowflake uses: requests.get(url, headers=headers, params={"url": url_param})
-  // This means requests automatically URL-encodes the url_param value
-  // In fetch, we need to manually encode it: ?url={encoded_url_param}
   const fullUrl = `${url}?url=${encodeURIComponent(urlParam)}`;
-  
 
-  let response: Response;
-  try {
-    response = await fetch(fullUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/fhir+json; charset=utf-8',
-      },
-      // Add timeout and signal for better error handling
-      signal: AbortSignal.timeout(30000), // 30 second timeout
+  // Wrap the fetch in retry logic for transient server errors (502, 503, 504, 429)
+  return withRetry(async () => {
+    let response: Response;
+    try {
+      response = await fetch(fullUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/fhir+json; charset=utf-8',
+        },
+        signal: AbortSignal.timeout(30000), // 30 second timeout
+      });
+    } catch (error: any) {
+      // Handle network errors (fetch failures, timeouts, etc.)
+      if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+        throw new Error(
+          `Request timeout (30s): The terminology server did not respond in time. The server may be overloaded.`
+        );
+      }
+      if (error?.message?.includes('fetch') || error?.message?.includes('network')) {
+        throw new Error(
+          `Network error: Unable to connect to terminology server. Please check your internet connection.`
+        );
+      }
+      throw new Error(
+        `Network error connecting to terminology server: ${error?.message || 'Unknown error'}`
+      );
+    }
+
+    // Check for retryable HTTP status codes before processing
+    if (isRetryableStatus(response.status)) {
+      throw new Error(
+        `Terminology server returned ${response.status}: Server overloaded or rate limited.`
+      );
+    }
+
+    // Handle FHIR errors - 404 returns empty array for this operation
+    const errorResult = await handleFhirResponse(response, {
+      overrides: { 404: 'RETURN_EMPTY' },
+      context: 'expanding ValueSet'
     });
-  } catch (error: any) {
-    // Handle network errors (fetch failures, timeouts, etc.)
-    const errorDetails = {
-      errorMessage: error?.message || 'Unknown error',
-      errorName: error?.name || 'Unknown',
-      errorStack: error?.stack || 'No stack trace',
-      errorCause: error?.cause ? {
-        message: error.cause?.message,
-        name: error.cause?.name,
-        stack: error.cause?.stack
-      } : null,
-      url: fullUrl.substring(0, 300),
-      urlLength: fullUrl.length,
-      serverBase: TERMINOLOGY_SERVER_BASE,
-      hasToken: !!token,
-      tokenPrefix: token ? token.substring(0, 20) + '...' : 'No token',
-      errorType: error?.constructor?.name || typeof error,
-      errorStringified: JSON.stringify(error, Object.getOwnPropertyNames(error)).substring(0, 500)
-    };
 
-    console.error('Network error fetching from terminology server - Full details:', errorDetails);
-    console.error('Error object keys:', Object.keys(error || {}));
-    console.error('Error object:', error);
+    if (errorResult !== null) {
+      return errorResult; // Returns [] for 404
+    }
 
-    // Specific error messages for common network issues
-    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+    // Safely parse JSON with better error handling
+    let data: FhirValueSetExpansion;
+    try {
+      const responseText = await response.text();
+
+      // Check if response looks like JSON
+      if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
+        console.error('Terminology server returned non-JSON response:', {
+          status: response.status,
+          contentType: response.headers.get('content-type'),
+          bodyPreview: responseText.substring(0, 500),
+        });
+        throw new Error(
+          `Terminology server returned unexpected response (not JSON). ` +
+          `Status: ${response.status}. This may indicate server overload or a proxy error.`
+        );
+      }
+
+      data = JSON.parse(responseText);
+    } catch (parseError: any) {
+      if (parseError.message?.includes('not JSON') || parseError.message?.includes('unexpected response')) {
+        throw parseError;
+      }
+      console.error('Failed to parse terminology server response as JSON:', parseError);
       throw new Error(
-        `Request timeout (30s): The terminology server did not respond in time. The server may be overloaded or experiencing issues.`
+        `Failed to parse terminology server response: ${parseError.message}. ` +
+        `The server may be returning an error page or rate limiting response.`
       );
     }
 
-    if (error?.message?.includes('fetch') || error?.message?.includes('network')) {
-      throw new Error(
-        `Network error: Unable to connect to terminology server. Please check your internet connection.`
-      );
+    // Extract concepts
+    const concepts: SnomedConcept[] = [];
+    if (data.expansion?.contains) {
+      for (const item of data.expansion.contains) {
+        concepts.push({
+          code: item.code,
+          display: item.display,
+          system: item.system,
+          source: 'child',
+        });
+      }
     }
 
-    throw new Error(
-      `Network error connecting to terminology server: ${error?.message || 'Unknown error'} (${error?.name || 'Unknown error type'})`
-    );
-  }
+    // Log if we got no concepts but response was OK
+    if (concepts.length === 0 && response.ok) {
+      const codeMatches = eclExpression.match(/\d{6,}/g);
+      console.warn(`⚠️ No concepts returned for ECL query (${codeMatches?.length || 0} codes)`);
+    }
 
-  // Handle FHIR errors - 404 returns empty array for this operation
-  const errorResult = await handleFhirResponse(response, {
-    overrides: { 404: 'RETURN_EMPTY' },
-    context: 'expanding ValueSet'
+    return concepts;
+  }, {
+    maxRetries: 3,
+    baseDelayMs: 2000, // Start with 2s delay for server overload
+    maxDelayMs: 30000,
+    context: 'ECL expansion'
   });
-
-  if (errorResult !== null) {
-    return errorResult; // Returns [] for 404
-  }
-
-  // Safely parse JSON with better error handling
-  let data: FhirValueSetExpansion;
-  try {
-    const responseText = await response.text();
-    
-    // Check if response looks like JSON
-    if (!responseText.trim().startsWith('{') && !responseText.trim().startsWith('[')) {
-      console.error('Terminology server returned non-JSON response:', {
-        status: response.status,
-        contentType: response.headers.get('content-type'),
-        bodyPreview: responseText.substring(0, 500),
-      });
-      throw new Error(
-        `Terminology server returned unexpected response (not JSON). ` +
-        `Status: ${response.status}, Content-Type: ${response.headers.get('content-type')}. ` +
-        `This may indicate rate limiting, server overload, or a proxy error.`
-      );
-    }
-    
-    data = JSON.parse(responseText);
-  } catch (parseError: any) {
-    if (parseError.message?.includes('not JSON') || parseError.message?.includes('unexpected response')) {
-      throw parseError; // Re-throw our custom error
-    }
-    console.error('Failed to parse terminology server response as JSON:', parseError);
-    throw new Error(
-      `Failed to parse terminology server response: ${parseError.message}. ` +
-      `The server may be returning an error page or rate limiting response.`
-    );
-  }
-
-  // Extract concepts
-  const concepts: SnomedConcept[] = [];
-  if (data.expansion?.contains) {
-    for (const item of data.expansion.contains) {
-      concepts.push({
-        code: item.code,
-        display: item.display,
-        system: item.system,
-        source: 'child', // Will be marked as 'parent' for original codes
-      });
-    }
-  }
-
-  // Log if we got no concepts but response was OK
-  if (concepts.length === 0 && response.ok) {
-    const codeMatches = eclExpression.match(/\d{6,}/g);
-    console.warn(`⚠️ No concepts returned for ECL query (${codeMatches?.length || 0} codes)`);
-  }
-
-  // Return empty array if no expansion - parent codes will be added by caller
-  return concepts;
   }); // End withConcurrencyLimit
 }

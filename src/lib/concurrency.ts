@@ -148,3 +148,95 @@ export function getConcurrencyStats(): {
     availableTokens: tokens,
   };
 }
+
+// Transient HTTP errors that should be retried
+const RETRYABLE_STATUS_CODES = [429, 502, 503, 504];
+
+export interface RetryOptions {
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  context?: string; // For logging
+}
+
+/**
+ * Checks if an error is retryable (transient server error)
+ */
+export function isRetryableError(error: any): boolean {
+  // Check for HTTP status codes in error message
+  if (error?.message) {
+    for (const code of RETRYABLE_STATUS_CODES) {
+      if (error.message.includes(`${code}`) || error.message.includes(`status ${code}`)) {
+        return true;
+      }
+    }
+    // Check for timeout/overload messages
+    if (error.message.includes('timeout') ||
+        error.message.includes('overload') ||
+        error.message.includes('rate limit') ||
+        error.message.includes('Too Many Requests')) {
+      return true;
+    }
+  }
+  // Check for Response objects
+  if (error?.status && RETRYABLE_STATUS_CODES.includes(error.status)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if an HTTP response status is retryable
+ */
+export function isRetryableStatus(status: number): boolean {
+  return RETRYABLE_STATUS_CODES.includes(status);
+}
+
+/**
+ * Execute a function with retry logic for transient failures.
+ * Uses exponential backoff with jitter.
+ *
+ * @param fn - Async function to execute
+ * @param options - Retry configuration
+ * @returns Promise resolving to the function's result
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const {
+    maxRetries = 3,
+    baseDelayMs = 1000,
+    maxDelayMs = 30000,
+    context = 'operation',
+  } = options;
+
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      // Don't retry if not a transient error or last attempt
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        throw error;
+      }
+
+      // Exponential backoff with jitter: delay = min(baseDelay * 2^attempt + jitter, maxDelay)
+      const exponentialDelay = baseDelayMs * Math.pow(2, attempt);
+      const jitter = Math.random() * 1000;
+      const delay = Math.min(exponentialDelay + jitter, maxDelayMs);
+
+      console.log(
+        `⏳ Retry ${attempt + 1}/${maxRetries} for ${context} after ${Math.round(delay)}ms ` +
+        `(${error?.message?.substring(0, 100) || 'Unknown error'})`
+      );
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
