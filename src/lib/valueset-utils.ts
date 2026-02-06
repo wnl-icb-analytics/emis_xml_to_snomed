@@ -162,11 +162,9 @@ export function generateValueSetId(reportId: string, valueSetHash: string, value
 }
 
 /**
- * Builds a deduplicated index map for a report's valueSets.
- * ValueSets with identical codes (same code hash) share the same index,
- * so friendly names are consistent (e.g. two identical valueSets both get _vs1
- * instead of _vs1 and _vs2).
- * Returns a Map from original array index to deduplicated index.
+ * Builds a map from original ValueSet array index to a deduplicated index.
+ * ValueSets with identical sorted codes share the same dedup index,
+ * so only truly unique code lists get different _vs numbers.
  */
 export function buildDeduplicatedIndexMap(
   valueSets: Array<{ values: Array<{ code: string }> }>

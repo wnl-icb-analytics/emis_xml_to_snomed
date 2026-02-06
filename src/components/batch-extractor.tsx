@@ -13,7 +13,7 @@ import { loadParsedXmlData } from '@/lib/storage';
 import { ExtractionFileList } from '@/components/extraction-file-list';
 import { ExtractionDataModel } from '@/components/extraction-data-model';
 import { expandValueSet } from '@/lib/valueset-expansion';
-import { buildDeduplicatedIndexMap, generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
+import { generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
 import { formatTime, formatTimeNatural } from '@/lib/time-utils';
 import { convertToCSV } from '@/lib/csv-utils';
 import { ExtractionDataViewer } from '@/components/extraction-data-viewer';
@@ -228,10 +228,14 @@ export default function BatchExtractor() {
       }
 
       // Step 2: Group by hash - only expand unique hashes
+      // Also build hash->dedupIndex so identical code sets share the same _vs number
       const hashGroups = new Map<string, ValueSetInstance[]>();
+      const hashToDedupIndex = new Map<string, number>();
+      let dedupCounter = 0;
       for (const instance of allInstances) {
         if (!hashGroups.has(instance.hash)) {
           hashGroups.set(instance.hash, []);
+          hashToDedupIndex.set(instance.hash, dedupCounter++);
         }
         hashGroups.get(instance.hash)!.push(instance);
       }
@@ -378,15 +382,16 @@ export default function BatchExtractor() {
         const templateGroup = result.data.valueSetGroups[0];
         if (!templateGroup) continue;
 
-        // Generate IDs specific to this report/valueset instance
-        const valueSetId = generateValueSetId(instance.report.id, instance.hash, instance.vsIndex);
-        const friendlyName = generateValueSetFriendlyName(instance.report.name, instance.vsIndex);
+        // Use deduplicated index so identical code sets share the same _vs number
+        const dedupIndex = hashToDedupIndex.get(instance.hash) ?? instance.vsIndex;
+        const valueSetId = generateValueSetId(instance.report.id, instance.hash, dedupIndex);
+        const friendlyName = generateValueSetFriendlyName(instance.report.name, dedupIndex);
 
         // Add valueset row
         normalizedData.valuesets.push({
           valueset_id: valueSetId,
           report_id: instance.report.id,
-          valueset_index: instance.vsIndex,
+          valueset_index: dedupIndex,
           valueset_hash: instance.hash,
           valueset_friendly_name: friendlyName,
           code_system: templateGroup.originalCodes?.[0]?.codeSystem || '',

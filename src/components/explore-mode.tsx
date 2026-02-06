@@ -122,6 +122,7 @@ export default function ExploreMode() {
       setExpandedData(initialData);
 
       // Process each valueSet sequentially with separate API calls
+      // Dedup so identical code lists share the same _vs number
       const allConcepts = new Map<string, any>();
       const dedupMap = buildDeduplicatedIndexMap(reportToExpand.valueSets);
 
@@ -136,7 +137,6 @@ export default function ExploreMode() {
         const vs = reportToExpand.valueSets[vsIndex];
         const dedupIndex = dedupMap.get(vsIndex) ?? vsIndex;
 
-        // Use shared utility to expand the ValueSet
         const result = await expandValueSet(
           reportToExpand.id,
           reportToExpand.name,
