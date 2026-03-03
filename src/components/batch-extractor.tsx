@@ -266,12 +266,9 @@ export default function BatchExtractor() {
 
       // Group by hash — only expand unique hashes
       const hashGroups = new Map<string, ValueSetInstance[]>();
-      const hashToDedupIndex = new Map<string, number>();
-      let dedupCounter = 0;
       for (const instance of allInstances) {
         if (!hashGroups.has(instance.hash)) {
           hashGroups.set(instance.hash, []);
-          hashToDedupIndex.set(instance.hash, dedupCounter++);
         }
         hashGroups.get(instance.hash)!.push(instance);
       }
@@ -505,15 +502,14 @@ export default function BatchExtractor() {
           });
         const eclExpression = buildFormattedEclExpression(eclValues, resolvedExcludedCodes);
 
-        const dedupIndex = hashToDedupIndex.get(instance.hash) ?? instance.vsIndex;
-        const valueSetId = generateValueSetId(instance.report.id, instance.hash, dedupIndex);
-        const friendlyName = generateValueSetFriendlyName(instance.report.name, dedupIndex);
+        const valueSetId = generateValueSetId(instance.report.id, instance.hash, instance.vsIndex);
+        const friendlyName = generateValueSetFriendlyName(instance.report.name, instance.vsIndex);
 
         // Valueset row
         normalizedData.valuesets.push({
           valueset_id: valueSetId,
           report_id: instance.report.id,
-          valueset_index: dedupIndex,
+          valueset_index: instance.vsIndex,
           valueset_hash: instance.hash,
           valueset_friendly_name: friendlyName,
           code_system: assembled.originalCodes?.[0]?.codeSystem || '',
