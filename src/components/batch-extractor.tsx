@@ -271,23 +271,41 @@ export default function BatchExtractor() {
           message: `Expanding ValueSet ${completedCount + 1} of ${totalUniqueValueSets}`,
         });
 
-        // Expand single ValueSet
+        // Expand single ValueSet with retry for transient errors (504, 502, etc.)
         const instances = hashGroups.get(hash)!;
         const template = instances[0];
+        const MAX_RETRIES = 3;
 
         let chunkResult: { hash: string; result: any; error: Error | undefined };
-        try {
-          const result = await expandValueSet(
-            template.report.id,
-            template.report.name,
-            template.vs,
-            0, // Index doesn't matter for expansion, only for naming
-            equivalenceFilter
-          );
-          chunkResult = { hash, result, error: undefined };
-        } catch (error) {
-          chunkResult = { hash, result: null, error: error as Error };
+        let lastError: Error | undefined;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const result = await expandValueSet(
+              template.report.id,
+              template.report.name,
+              template.vs,
+              0, // Index doesn't matter for expansion, only for naming
+              equivalenceFilter
+            );
+            chunkResult = { hash, result, error: undefined };
+            lastError = undefined;
+            break;
+          } catch (error) {
+            lastError = error as Error;
+            const msg = lastError.message || '';
+            const isRetryable = msg.includes('504') || msg.includes('502') || msg.includes('503')
+              || msg.includes('timeout') || msg.includes('429') || msg.includes('overloaded');
+
+            if (isRetryable && attempt < MAX_RETRIES) {
+              const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 30000);
+              console.log(`Retry ${attempt + 1}/${MAX_RETRIES} for ValueSet hash ${hash} after ${Math.round(delay)}ms (${msg.substring(0, 80)})`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
         }
+
+        chunkResult ??= { hash, result: null, error: lastError };
 
         const chunkResults = [chunkResult];
 
