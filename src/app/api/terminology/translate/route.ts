@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { TranslateCodesRequest, TranslateCodesResponse, TranslatedCode } from '@/lib/types';
-import { translateEmisCodeToSnomed } from '@/lib/terminology-client';
-import { sequentialWithDelay } from '@/lib/concurrency';
+import { TranslateCodesRequest, TranslateCodesResponse } from '@/lib/types';
+import { batchTranslateEmisCodes } from '@/lib/terminology-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,13 +15,9 @@ export async function POST(request: NextRequest) {
     }
 
     const uniqueCodes = [...new Set(codes)];
-    console.log(`Translating ${uniqueCodes.length} unique EMIS codes (filter: ${equivalenceFilter})...`);
+    console.log(`Batch translating ${uniqueCodes.length} unique EMIS codes (filter: ${equivalenceFilter})...`);
 
-    const translations: Record<string, TranslatedCode | null> = {};
-
-    await sequentialWithDelay(uniqueCodes, async (code) => {
-      translations[code] = await translateEmisCodeToSnomed(code, equivalenceFilter);
-    }, 10);
+    const translations = await batchTranslateEmisCodes(uniqueCodes, equivalenceFilter);
 
     const successCount = Object.values(translations).filter(t => t !== null).length;
     console.log(`Translation complete: ${successCount}/${uniqueCodes.length} successful`);

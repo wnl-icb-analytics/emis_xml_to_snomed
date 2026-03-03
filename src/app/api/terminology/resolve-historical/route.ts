@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ResolveHistoricalRequest, ResolveHistoricalResponse } from '@/lib/types';
-import { resolveHistoricalConcept } from '@/lib/terminology-client';
-import { sequentialWithDelay } from '@/lib/concurrency';
+import { batchResolveHistorical } from '@/lib/terminology-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,13 +15,9 @@ export async function POST(request: NextRequest) {
     }
 
     const uniqueIds = [...new Set(conceptIds)];
-    console.log(`Resolving ${uniqueIds.length} unique concepts for historical associations...`);
+    console.log(`Batch resolving ${uniqueIds.length} unique concepts for historical associations...`);
 
-    const resolutions: Record<string, { currentConceptId: string; isHistorical: boolean; display?: string }> = {};
-
-    await sequentialWithDelay(uniqueIds, async (conceptId) => {
-      resolutions[conceptId] = await resolveHistoricalConcept(conceptId);
-    }, 10);
+    const resolutions = await batchResolveHistorical(uniqueIds);
 
     const historicalCount = Object.values(resolutions).filter(r => r.isHistorical).length;
     console.log(`Historical resolution complete: ${historicalCount} historical concepts updated`);
