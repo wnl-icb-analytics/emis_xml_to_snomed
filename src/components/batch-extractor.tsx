@@ -297,29 +297,40 @@ export default function BatchExtractor() {
         return;
       }
 
-      // === Phase 2: Global translation (one API call) ===
-      setProcessingStatus({
-        currentReport: 0, totalReports: totalUniqueValueSets,
-        reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
-        currentValueSet: 0, totalValueSets: totalUniqueValueSets,
-        message: `Translating ${allUniqueCodes.size} unique codes...`,
-      });
+      // === Phase 2: Global translation (chunked — each code is an HTTP request server-side) ===
+      const TRANSLATE_CHUNK_SIZE = 200;
+      const allCodesArray = Array.from(allUniqueCodes);
+      const globalTranslations: Record<string, TranslatedCode | null> = {};
+      const translateChunkCount = Math.ceil(allCodesArray.length / TRANSLATE_CHUNK_SIZE);
 
-      const translateData = await fetchApi('/api/terminology/translate', {
-        codes: Array.from(allUniqueCodes),
-        equivalenceFilter,
-      });
-      const globalTranslations: Record<string, TranslatedCode | null> = translateData.translations || {};
+      for (let i = 0; i < allCodesArray.length; i += TRANSLATE_CHUNK_SIZE) {
+        if (cancellationRef.current) {
+          setStatus('idle'); setProcessingStatus(null);
+          setIsExtracting(false); setContextIsExtracting(false);
+          return;
+        }
+
+        const chunkIndex = Math.floor(i / TRANSLATE_CHUNK_SIZE) + 1;
+        const chunk = allCodesArray.slice(i, i + TRANSLATE_CHUNK_SIZE);
+
+        setProcessingStatus({
+          currentReport: 0, totalReports: totalUniqueValueSets,
+          reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
+          currentValueSet: 0, totalValueSets: totalUniqueValueSets,
+          message: `Translating codes (batch ${chunkIndex}/${translateChunkCount}, ${Math.min(i + TRANSLATE_CHUNK_SIZE, allCodesArray.length)}/${allCodesArray.length})...`,
+        });
+
+        const translateData = await fetchApi('/api/terminology/translate', {
+          codes: chunk,
+          equivalenceFilter,
+        });
+        Object.assign(globalTranslations, translateData.translations || {});
+      }
+
       const translatedCount = Object.values(globalTranslations).filter(t => t !== null).length;
       console.log(`Global translation: ${translatedCount}/${allUniqueCodes.size} codes translated`);
 
-      if (cancellationRef.current) {
-        setStatus('idle'); setProcessingStatus(null);
-        setIsExtracting(false); setContextIsExtracting(false);
-        return;
-      }
-
-      // === Phase 3: Global historical resolution (one API call) ===
+      // === Phase 3: Global historical resolution (chunked) ===
       const snomedCodesToResolve = new Set<string>();
       for (const [code, translated] of Object.entries(globalTranslations)) {
         if (translated) {
@@ -328,30 +339,43 @@ export default function BatchExtractor() {
           snomedCodesToResolve.add(code);
         }
       }
-      // Also include codes that weren't in the translation map (might already be SNOMED)
       for (const code of allUniqueCodes) {
         if (!(code in globalTranslations)) {
           snomedCodesToResolve.add(code);
         }
       }
 
-      setProcessingStatus({
-        currentReport: 0, totalReports: totalUniqueValueSets,
-        reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
-        currentValueSet: 0, totalValueSets: totalUniqueValueSets,
-        message: `Resolving ${snomedCodesToResolve.size} historical concepts...`,
-      });
-
-      const resolveData = await fetchApi('/api/terminology/resolve-historical', {
-        conceptIds: Array.from(snomedCodesToResolve),
-      });
-
-      // Build simple map: conceptId → currentConceptId (only for historical concepts)
+      const RESOLVE_CHUNK_SIZE = 500;
+      const resolveArray = Array.from(snomedCodesToResolve);
       const globalHistorical: Record<string, string> = {};
-      for (const [conceptId, resolution] of Object.entries(resolveData.resolutions || {})) {
-        const res = resolution as { currentConceptId: string; isHistorical: boolean };
-        if (res.isHistorical) {
-          globalHistorical[conceptId] = res.currentConceptId;
+      const resolveChunkCount = Math.ceil(resolveArray.length / RESOLVE_CHUNK_SIZE);
+
+      for (let i = 0; i < resolveArray.length; i += RESOLVE_CHUNK_SIZE) {
+        if (cancellationRef.current) {
+          setStatus('idle'); setProcessingStatus(null);
+          setIsExtracting(false); setContextIsExtracting(false);
+          return;
+        }
+
+        const chunkIndex = Math.floor(i / RESOLVE_CHUNK_SIZE) + 1;
+        const chunk = resolveArray.slice(i, i + RESOLVE_CHUNK_SIZE);
+
+        setProcessingStatus({
+          currentReport: 0, totalReports: totalUniqueValueSets,
+          reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
+          currentValueSet: 0, totalValueSets: totalUniqueValueSets,
+          message: `Resolving historical concepts (batch ${chunkIndex}/${resolveChunkCount}, ${Math.min(i + RESOLVE_CHUNK_SIZE, resolveArray.length)}/${resolveArray.length})...`,
+        });
+
+        const resolveData = await fetchApi('/api/terminology/resolve-historical', {
+          conceptIds: chunk,
+        });
+
+        for (const [conceptId, resolution] of Object.entries(resolveData.resolutions || {})) {
+          const res = resolution as { currentConceptId: string; isHistorical: boolean };
+          if (res.isHistorical) {
+            globalHistorical[conceptId] = res.currentConceptId;
+          }
         }
       }
       console.log(`Historical resolution: ${Object.keys(globalHistorical).length} concepts updated`);
