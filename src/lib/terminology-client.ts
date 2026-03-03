@@ -2,7 +2,7 @@ import { getAccessToken } from './oauth-client';
 import { FhirValueSetExpansion, SnomedConcept, ConceptMapTranslateResponse, TranslatedCode, EquivalenceFilter } from './types';
 import { getPrimaryConceptMapId, getFallbackConceptMapId, getConceptMapVersions as _getConceptMapVersions } from './concept-map-resolver';
 import { handleFhirResponse } from './fhir-error-handler';
-import { withConcurrencyLimit, withRetry, isRetryableStatus } from './concurrency';
+import { withRetry, isRetryableStatus, sequentialWithDelay } from './concurrency';
 
 const TERMINOLOGY_SERVER_BASE =
   process.env.TERMINOLOGY_SERVER ||
@@ -178,8 +178,8 @@ export async function translateEmisCodeToSnomed(
  * Batch translates EMIS codes to SNOMED using ConceptMap
  * Accepts mappings based on the equivalence filter setting
  * Returns a map of EMIS code -> TranslatedCode (with display name)
- * 
- * Uses concurrency limiter for rate limiting (5 concurrent, 10/sec max)
+ *
+ * Processes codes sequentially with 10ms delay to avoid overwhelming the terminology server
  */
 export async function translateEmisCodesToSnomed(
   emisCodes: string[],
@@ -194,20 +194,15 @@ export async function translateEmisCodesToSnomed(
   let successCount = 0;
   let failureCount = 0;
 
-  // Use concurrency limiter instead of manual batching
-  const promises = uniqueCodes.map(emisCode => 
-    withConcurrencyLimit(async () => {
-      const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter);
-      if (translatedCode) {
-        mapping.set(emisCode, translatedCode);
-        successCount++;
-      } else {
-        failureCount++;
-      }
-    })
-  );
-
-  await Promise.all(promises);
+  await sequentialWithDelay(uniqueCodes, async (emisCode) => {
+    const translatedCode = await translateEmisCodeToSnomed(emisCode, equivalenceFilter);
+    if (translatedCode) {
+      mapping.set(emisCode, translatedCode);
+      successCount++;
+    } else {
+      failureCount++;
+    }
+  }, 10);
 
   console.log(`ConceptMap translation complete: ${successCount} successful, ${failureCount} failed/rejected (equivalence filter: ${equivalenceFilter}, accepted: ${acceptedEquivalences.join(', ')})`);
 
@@ -346,8 +341,8 @@ export async function resolveHistoricalConcept(
 /**
  * Batch resolves historical concepts to current concepts
  * Returns a map of original concept ID -> current concept ID
- * 
- * Uses concurrency limiter for rate limiting (5 concurrent, 10/sec max)
+ *
+ * Processes concepts sequentially with 10ms delay to avoid overwhelming the terminology server
  */
 export async function resolveHistoricalConcepts(
   conceptIds: string[]
@@ -359,18 +354,13 @@ export async function resolveHistoricalConcepts(
 
   let historicalCount = 0;
 
-  // Use concurrency limiter instead of manual batching
-  const promises = uniqueIds.map(conceptId =>
-    withConcurrencyLimit(async () => {
-      const result = await resolveHistoricalConcept(conceptId);
-      mapping.set(conceptId, result.currentConceptId);
-      if (result.isHistorical) {
-        historicalCount++;
-      }
-    })
-  );
-
-  await Promise.all(promises);
+  await sequentialWithDelay(uniqueIds, async (conceptId) => {
+    const result = await resolveHistoricalConcept(conceptId);
+    mapping.set(conceptId, result.currentConceptId);
+    if (result.isHistorical) {
+      historicalCount++;
+    }
+  }, 10);
 
   console.log(`Historical resolution complete: ${historicalCount} historical concepts updated`);
 
@@ -386,9 +376,7 @@ export async function expandEclQuery(
     return [];
   }
 
-  // Use concurrency limiter for rate limiting
-  return withConcurrencyLimit(async () => {
-    const token = await getAccessToken();
+  const token = await getAccessToken();
 
   // URL encode the ECL expression
   const encodedEcl = encodeURIComponent(eclExpression);
@@ -500,5 +488,4 @@ export async function expandEclQuery(
     maxDelayMs: 30000,
     context: 'ECL expansion'
   });
-  }); // End withConcurrencyLimit
 }

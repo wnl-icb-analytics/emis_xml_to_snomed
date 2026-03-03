@@ -792,16 +792,16 @@ export async function POST(request: NextRequest) {
 
       console.log(`Optimization: ${valueSetMapping.length} ValueSets grouped into ${hashGroups.size} unique code sets`);
 
-      // Step 3: Expand each unique hash in parallel (concurrency limiter handles rate limiting)
+      // Step 3: Expand each unique hash sequentially with 10ms delay to avoid overwhelming server
       const expandedByHash = new Map<string, ValueSetGroup>();
       const hashEntries = Array.from(hashGroups.entries());
-      
-      const expansionPromises = hashEntries.map(async ([hash, items]) => {
-        // Use the first mapping in the group as the template for expansion
+
+      for (let i = 0; i < hashEntries.length; i++) {
+        const [hash, items] = hashEntries[i];
         const firstItem = items[0];
-        
+
         console.log(`Expanding hash ${hash} (${items.length} ValueSet(s) share this code set)...`);
-        
+
         const valueSetGroup = await expandSingleValueSet(
           firstItem.mapping,
           parentCodes,
@@ -816,12 +816,11 @@ export async function POST(request: NextRequest) {
           allConceptsMap
         );
 
-        return { hash, valueSetGroup };
-      });
-
-      const expansionResults = await Promise.all(expansionPromises);
-      for (const { hash, valueSetGroup } of expansionResults) {
         expandedByHash.set(hash, valueSetGroup);
+
+        if (i < hashEntries.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
 
       // Step 4: Propagate results to all ValueSets with the same hash

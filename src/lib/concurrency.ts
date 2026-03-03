@@ -121,7 +121,7 @@ export async function withConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> 
 /**
  * Execute multiple functions with concurrency limiting.
  * Like Promise.all but respects concurrency and rate limits.
- * 
+ *
  * @param fns - Array of async functions to execute
  * @returns Promise resolving to array of results
  */
@@ -129,6 +129,30 @@ export async function allWithConcurrencyLimit<T>(
   fns: Array<() => Promise<T>>
 ): Promise<T[]> {
   return Promise.all(fns.map(fn => withConcurrencyLimit(fn)));
+}
+
+/**
+ * Execute async tasks sequentially with a fixed delay between each.
+ * Use this instead of Promise.all when the server can't handle concurrent requests.
+ *
+ * @param items - Items to process
+ * @param fn - Async function to call for each item
+ * @param delayMs - Delay in ms between each call (default 10ms)
+ * @returns Promise resolving to array of results
+ */
+export async function sequentialWithDelay<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  delayMs: number = 10
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    results.push(await fn(items[i]));
+    if (i < items.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  return results;
 }
 
 /**
