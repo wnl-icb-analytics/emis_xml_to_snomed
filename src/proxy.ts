@@ -24,7 +24,7 @@ export function proxy(request: NextRequest) {
   }
 
   // Allow access to internal API routes (called from authenticated client-side code)
-  if (pathname.startsWith('/api/xml/parse') || pathname.startsWith('/api/terminology/expand')) {
+  if (pathname.startsWith('/api/xml/parse') || pathname.startsWith('/api/terminology/')) {
     return NextResponse.next();
   }
 

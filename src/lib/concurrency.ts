@@ -132,6 +132,25 @@ export async function allWithConcurrencyLimit<T>(
 }
 
 /**
+ * Process items sequentially with a delay between each.
+ * Simpler alternative to concurrency limiting for ordered processing.
+ */
+export async function sequentialWithDelay<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  delayMs: number = 10
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    results.push(await fn(items[i]));
+    if (i < items.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  return results;
+}
+
+/**
  * Get current limiter stats (for debugging)
  */
 export function getConcurrencyStats(): {
