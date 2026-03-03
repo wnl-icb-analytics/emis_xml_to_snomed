@@ -255,10 +255,17 @@ export default function BatchExtractor() {
           parsed_at: new Date().toISOString(),
         });
 
-        for (let vsIndex = 0; vsIndex < report.valueSets.length; vsIndex++) {
-          const vs = report.valueSets[vsIndex];
+        // Deduplicate ValueSets within report by code content (matching explore mode logic)
+        const reportCodeHashToIndex = new Map<string, number>();
+        let reportVsCounter = 0;
+        for (const vs of report.valueSets) {
           const codes = vs.values.map((v: any) => v.code).sort();
+          const codeKey = codes.join(',');
           const hash = generateValueSetHash(codes);
+
+          if (reportCodeHashToIndex.has(codeKey)) continue; // skip duplicate within report
+          const vsIndex = reportVsCounter++;
+          reportCodeHashToIndex.set(codeKey, vsIndex);
 
           allInstances.push({ report, reportIndex, vsIndex, vs, hash, codes });
         }
