@@ -367,6 +367,263 @@ export async function resolveHistoricalConcepts(
   return mapping;
 }
 
+/**
+ * Parse a single ConceptMap $translate response entry and extract the translated code.
+ * Reuses the same logic as tryConceptMapTranslation.
+ */
+function parseTranslateResponse(
+  data: ConceptMapTranslateResponse,
+  acceptedEquivalences: string[]
+): TranslatedCode | null {
+  if (!data.parameter) return null;
+  const resultParam = data.parameter.find((p) => p.name === 'result');
+  if (!resultParam?.valueBoolean) return null;
+  const matchParam = data.parameter.find((p) => p.name === 'match');
+  if (!matchParam?.part) return null;
+
+  const equivalencePart = matchParam.part.find((p) => p.name === 'equivalence');
+  const equivalence = equivalencePart?.valueCode || equivalencePart?.valueString;
+  if (equivalence && !acceptedEquivalences.includes(equivalence)) return null;
+
+  const conceptPart = matchParam.part.find((p) => p.name === 'concept');
+  if (!conceptPart?.valueCoding?.code) return null;
+
+  return {
+    code: conceptPart.valueCoding.code,
+    display: conceptPart.valueCoding.display,
+    equivalence,
+  };
+}
+
+/**
+ * Batch translate EMIS codes using a FHIR Bundle.
+ * Sends one HTTP request for up to ~500 codes instead of one request per code.
+ * Tries the primary ConceptMap first, then falls back for codes that didn't match.
+ */
+export async function batchTranslateEmisCodes(
+  emisCodes: string[],
+  equivalenceFilter: EquivalenceFilter = 'strict'
+): Promise<Record<string, TranslatedCode | null>> {
+  if (emisCodes.length === 0) return {};
+
+  const token = await getAccessToken();
+  const acceptedEquivalences = getAcceptedEquivalences(equivalenceFilter);
+  const primaryId = await getPrimaryConceptMapId(token);
+  const fallbackId = await getFallbackConceptMapId(token);
+
+  const results: Record<string, TranslatedCode | null> = {};
+
+  // Build FHIR batch bundle for primary ConceptMap
+  const buildTranslateBundle = (codes: string[], conceptMapId: string) => ({
+    resourceType: 'Bundle',
+    type: 'batch',
+    entry: codes.map(code => ({
+      request: {
+        method: 'POST',
+        url: `ConceptMap/${conceptMapId}/$translate`,
+      },
+      resource: {
+        resourceType: 'Parameters',
+        parameter: [
+          { name: 'code', valueCode: code },
+          { name: 'system', valueUri: EMIS_CODE_SYSTEM },
+          { name: 'target', valueUri: SNOMED_CODE_SYSTEM },
+        ],
+      },
+    })),
+  });
+
+  const sendBundle = async (bundle: any): Promise<any> => {
+    const response = await fetch(TERMINOLOGY_SERVER_BASE, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/fhir+json; charset=utf-8',
+        'Content-Type': 'application/fhir+json; charset=utf-8',
+      },
+      body: JSON.stringify(bundle),
+      signal: AbortSignal.timeout(120000), // 2 min for large batches
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`FHIR batch request failed (${response.status}): ${text.substring(0, 300)}`);
+    }
+    return response.json();
+  };
+
+  // Phase 1: Try primary ConceptMap
+  console.log(`Batch translating ${emisCodes.length} codes via primary ConceptMap ${primaryId}...`);
+  const primaryBundle = buildTranslateBundle(emisCodes, primaryId);
+  const primaryResponse = await sendBundle(primaryBundle);
+
+  const failedCodes: string[] = [];
+  if (primaryResponse.entry) {
+    for (let i = 0; i < emisCodes.length; i++) {
+      const entry = primaryResponse.entry[i];
+      if (entry?.response?.status?.startsWith('2') && entry.resource) {
+        const translated = parseTranslateResponse(entry.resource, acceptedEquivalences);
+        if (translated) {
+          results[emisCodes[i]] = translated;
+          continue;
+        }
+      }
+      // Not found or error — try fallback
+      failedCodes.push(emisCodes[i]);
+    }
+  } else {
+    failedCodes.push(...emisCodes);
+  }
+
+  console.log(`Primary ConceptMap: ${emisCodes.length - failedCodes.length} translated, ${failedCodes.length} need fallback`);
+
+  // Phase 2: Try fallback ConceptMap for codes that didn't match
+  if (failedCodes.length > 0) {
+    console.log(`Batch translating ${failedCodes.length} codes via fallback ConceptMap ${fallbackId}...`);
+    const fallbackBundle = buildTranslateBundle(failedCodes, fallbackId);
+    const fallbackResponse = await sendBundle(fallbackBundle);
+
+    if (fallbackResponse.entry) {
+      for (let i = 0; i < failedCodes.length; i++) {
+        const entry = fallbackResponse.entry[i];
+        if (entry?.response?.status?.startsWith('2') && entry.resource) {
+          const translated = parseTranslateResponse(entry.resource, acceptedEquivalences);
+          if (translated) {
+            results[failedCodes[i]] = translated;
+            continue;
+          }
+        }
+        // Still no match
+        results[failedCodes[i]] = null;
+      }
+    } else {
+      for (const code of failedCodes) {
+        results[code] = null;
+      }
+    }
+  }
+
+  const successCount = Object.values(results).filter(v => v !== null).length;
+  console.log(`Batch translation complete: ${successCount}/${emisCodes.length} translated`);
+  return results;
+}
+
+/**
+ * Batch resolve historical concepts using a FHIR Bundle.
+ * Sends one HTTP request for up to ~500 concepts instead of one per concept.
+ */
+export async function batchResolveHistorical(
+  conceptIds: string[]
+): Promise<Record<string, { currentConceptId: string; isHistorical: boolean; display?: string }>> {
+  if (conceptIds.length === 0) return {};
+
+  const token = await getAccessToken();
+  const results: Record<string, { currentConceptId: string; isHistorical: boolean; display?: string }> = {};
+
+  // Build FHIR batch bundle for $lookup
+  const bundle = {
+    resourceType: 'Bundle',
+    type: 'batch',
+    entry: conceptIds.map(conceptId => ({
+      request: {
+        method: 'POST',
+        url: 'CodeSystem/$lookup',
+      },
+      resource: {
+        resourceType: 'Parameters',
+        parameter: [
+          { name: 'system', valueUri: SNOMED_CODE_SYSTEM },
+          { name: 'code', valueCode: conceptId },
+          { name: 'property', valueCode: 'inactive' },
+          { name: 'property', valueCode: 'SAME_AS' },
+          { name: 'property', valueCode: 'REPLACED_BY' },
+          { name: 'property', valueCode: 'POSSIBLY_EQUIVALENT_TO' },
+        ],
+      },
+    })),
+  };
+
+  const response = await fetch(TERMINOLOGY_SERVER_BASE, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/fhir+json; charset=utf-8',
+      'Content-Type': 'application/fhir+json; charset=utf-8',
+    },
+    body: JSON.stringify(bundle),
+    signal: AbortSignal.timeout(120000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`FHIR batch lookup failed (${response.status}): ${text.substring(0, 300)}`);
+  }
+
+  const responseBundle = await response.json();
+  const associationPriority = ['SAME_AS', 'REPLACED_BY', 'POSSIBLY_EQUIVALENT_TO'];
+
+  if (responseBundle.entry) {
+    for (let i = 0; i < conceptIds.length; i++) {
+      const conceptId = conceptIds[i];
+      const entry = responseBundle.entry[i];
+
+      if (!entry?.response?.status?.startsWith('2') || !entry.resource?.parameter) {
+        results[conceptId] = { currentConceptId: conceptId, isHistorical: false };
+        continue;
+      }
+
+      const data = entry.resource;
+
+      // Extract display
+      const displayParam = data.parameter.find((p: any) => p.name === 'display');
+      const display = displayParam?.valueString;
+
+      // Check inactive
+      let isInactive = false;
+      const inactiveProp = data.parameter.find(
+        (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === 'inactive')
+      );
+      if (inactiveProp?.part) {
+        const valuePart = inactiveProp.part.find((p: any) => p.name === 'value');
+        isInactive = valuePart?.valueBoolean === true;
+      }
+
+      if (!isInactive) {
+        results[conceptId] = { currentConceptId: conceptId, isHistorical: false, display };
+        continue;
+      }
+
+      // Find historical association
+      let resolved = false;
+      for (const assocType of associationPriority) {
+        const assocProp = data.parameter.find(
+          (p: any) => p.name === 'property' && p.part?.some((part: any) => part.name === 'code' && part.valueCode === assocType)
+        );
+        if (assocProp?.part) {
+          const valuePart = assocProp.part.find((p: any) => p.name === 'value');
+          if (valuePart?.valueCode) {
+            results[conceptId] = { currentConceptId: valuePart.valueCode, isHistorical: true, display };
+            resolved = true;
+            break;
+          }
+        }
+      }
+
+      if (!resolved) {
+        results[conceptId] = { currentConceptId: conceptId, isHistorical: true, display };
+      }
+    }
+  } else {
+    for (const conceptId of conceptIds) {
+      results[conceptId] = { currentConceptId: conceptId, isHistorical: false };
+    }
+  }
+
+  const historicalCount = Object.values(results).filter(r => r.isHistorical).length;
+  console.log(`Batch historical resolution: ${historicalCount}/${conceptIds.length} historical`);
+  return results;
+}
+
 export async function expandEclQuery(
   eclExpression: string
 ): Promise<SnomedConcept[]> {

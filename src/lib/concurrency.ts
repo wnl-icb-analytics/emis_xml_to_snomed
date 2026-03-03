@@ -132,13 +132,8 @@ export async function allWithConcurrencyLimit<T>(
 }
 
 /**
- * Execute async tasks sequentially with a fixed delay between each.
- * Use this instead of Promise.all when the server can't handle concurrent requests.
- *
- * @param items - Items to process
- * @param fn - Async function to call for each item
- * @param delayMs - Delay in ms between each call (default 10ms)
- * @returns Promise resolving to array of results
+ * Process items sequentially with a delay between each.
+ * Simpler alternative to concurrency limiting for ordered processing.
  */
 export async function sequentialWithDelay<T, R>(
   items: T[],

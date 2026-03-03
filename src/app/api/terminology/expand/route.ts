@@ -4,6 +4,7 @@ import {
   ExpandCodesResponse,
   ExpandedCodeSet,
   ValueSetGroup,
+  RawValueSetExpansion,
   EmisValue,
 } from '@/lib/types';
 import { buildBatchedEclQuery, buildBatchedEclQueryWithoutRefsets, buildUkProductEcl, buildModificationOfEcl, separateRefsets, buildFormattedEclExpression } from '@/lib/ecl-builder';
@@ -47,8 +48,9 @@ async function expandSingleValueSet(
   historicalMap: Map<string, string>,
   featureId: string,
   featureName: string,
-  allConceptsMap: Map<string, any>
-): Promise<ValueSetGroup> {
+  allConceptsMap: Map<string, any>,
+  rawMode?: boolean
+): Promise<ValueSetGroup | RawValueSetExpansion> {
   const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
   const vsOriginalExcludedCodes = mapping.excludedCodes || [];
   
@@ -387,6 +389,18 @@ async function expandSingleValueSet(
     (c) => !vsExcludedSet.has(c.code)
   );
 
+  // In rawMode, return lighter response — client handles metadata assembly
+  if (rawMode) {
+    const vsSnomedParentCodes = vsValues.map((v: ValueWithMetadata) => v.code);
+    return {
+      concepts: filteredConcepts,
+      parentCodes: vsSnomedParentCodes,
+      rf2RefsetIds: Array.from(rf2RefsetResults.keys()),
+      successfulSctConstCodes: Array.from(successfullyExpandedSctConstCodes),
+      sctConstNoProducts: Object.fromEntries(sctConstCodesWithNoProducts),
+    } as RawValueSetExpansion;
+  }
+
   // Check if expansion failed for refsets
   const vsIsRefsetFlags = mapping.codeIndices.map((idx: number) => isRefset?.[idx] || false);
   const allRefsets = vsIsRefsetFlags.length > 0 && vsIsRefsetFlags.every((flag: boolean) => flag === true);
@@ -674,7 +688,10 @@ export async function POST(request: NextRequest) {
       isRefset,
       codeSystems,
       valueSetMapping,
-      equivalenceFilter = 'strict', // Default to strict filter
+      equivalenceFilter = 'strict',
+      preComputedTranslations,
+      preComputedHistorical,
+      rawMode,
     } = body;
 
     if (!parentCodes || parentCodes.length === 0) {
@@ -684,53 +701,66 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Strategy: Try ConceptMap translation for ALL codes
-    // If translation succeeds -> use translated code
-    // If translation fails (404) -> assume already valid SNOMED
-    // This handles unreliable codeSystem labels in XML
-    //
-    // NOTE: Codes with EMIS namespace 1000033 need translation to NHS dm+d (namespace 1000001)
-    // Codes that already have NHS dm+d namespace 1000001 don't need translation
+    // Use pre-computed maps if provided (batch mode), otherwise compute them
+    let codeToSnomedMap: Map<string, any>;
+    let historicalMap: Map<string, string>;
 
-    console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes (equivalence filter: ${equivalenceFilter})...`);
-    const codeToSnomedMap = await translateEmisCodesToSnomed(parentCodes, equivalenceFilter);
-    console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} not found in ConceptMap`);
+    if (preComputedTranslations && preComputedHistorical) {
+      // Batch mode: use pre-computed maps from client
+      console.log(`Using pre-computed translations (${Object.keys(preComputedTranslations).length} codes) and historical map (${Object.keys(preComputedHistorical).length} concepts)`);
+      codeToSnomedMap = new Map(
+        Object.entries(preComputedTranslations).filter(([, v]) => v !== null) as [string, any][]
+      );
+      historicalMap = new Map(Object.entries(preComputedHistorical));
 
-    // Log first few translated mappings
-    let loggedMappings = 0;
-    codeToSnomedMap.forEach((translatedCode, originalCode) => {
-      if (loggedMappings < 5) {
-        console.log(`  Translated: ${originalCode} -> ${translatedCode.code} (${translatedCode.display || 'no display'}, equivalence: ${translatedCode.equivalence || 'unknown'})`);
-        loggedMappings++;
-      }
-    });
-
-    // Fallback: Check if codes that failed ConceptMap translation are refsets in RF2
-    const codesNotTranslated = parentCodes.filter(code => !codeToSnomedMap.has(code));
-    if (codesNotTranslated.length > 0) {
-      console.log(`Checking ${codesNotTranslated.length} untranslated codes against RF2 refsets...`);
+      // Still check untranslated codes against RF2 refsets
+      const codesNotTranslated = parentCodes.filter(code => !codeToSnomedMap.has(code));
       for (const code of codesNotTranslated) {
-        // Check if this code exists as a refset in RF2
         if (refsetExistsInRf2(code)) {
-          console.log(`  Code ${code} found as refset in RF2, will expand from RF2`);
-          // Mark as refset if not already marked
           const codeIndex = parentCodes.indexOf(code);
           if (codeIndex !== -1 && isRefset) {
             isRefset[codeIndex] = true;
           }
         }
       }
+    } else {
+      // Standard mode: compute translations and historical resolution
+      console.log(`Attempting ConceptMap translation for all ${parentCodes.length} codes (equivalence filter: ${equivalenceFilter})...`);
+      codeToSnomedMap = await translateEmisCodesToSnomed(parentCodes, equivalenceFilter);
+      console.log(`ConceptMap results: ${codeToSnomedMap.size} codes translated, ${parentCodes.length - codeToSnomedMap.size} not found in ConceptMap`);
+
+      // Log first few translated mappings
+      let loggedMappings = 0;
+      codeToSnomedMap.forEach((translatedCode, originalCode) => {
+        if (loggedMappings < 5) {
+          console.log(`  Translated: ${originalCode} -> ${translatedCode.code} (${translatedCode.display || 'no display'}, equivalence: ${translatedCode.equivalence || 'unknown'})`);
+          loggedMappings++;
+        }
+      });
+
+      // Fallback: Check if codes that failed ConceptMap translation are refsets in RF2
+      const codesNotTranslated = parentCodes.filter(code => !codeToSnomedMap.has(code));
+      if (codesNotTranslated.length > 0) {
+        console.log(`Checking ${codesNotTranslated.length} untranslated codes against RF2 refsets...`);
+        for (const code of codesNotTranslated) {
+          if (refsetExistsInRf2(code)) {
+            console.log(`  Code ${code} found as refset in RF2, will expand from RF2`);
+            const codeIndex = parentCodes.indexOf(code);
+            if (codeIndex !== -1 && isRefset) {
+              isRefset[codeIndex] = true;
+            }
+          }
+        }
+      }
+
+      // Collect all SNOMED codes and resolve historical
+      const allSnomedCodes: string[] = [];
+      parentCodes.forEach((code) => {
+        const translatedCode = codeToSnomedMap.get(code);
+        allSnomedCodes.push(translatedCode?.code || code);
+      });
+      historicalMap = await resolveHistoricalConcepts(allSnomedCodes);
     }
-
-    // Collect all SNOMED codes (translated or original if translation failed)
-    const allSnomedCodes: string[] = [];
-    parentCodes.forEach((code) => {
-      const translatedCode = codeToSnomedMap.get(code);
-      allSnomedCodes.push(translatedCode?.code || code); // Use translated code if available, else original
-    });
-
-    // Resolve historical SNOMED concepts to current ones
-    const historicalMap = await resolveHistoricalConcepts(allSnomedCodes);
 
     // Build values array for ECL construction
     const values: Array<{
@@ -813,10 +843,11 @@ export async function POST(request: NextRequest) {
           historicalMap,
           featureId,
           featureName,
-          allConceptsMap
+          allConceptsMap,
+          rawMode
         );
 
-        expandedByHash.set(hash, valueSetGroup);
+        expandedByHash.set(hash, valueSetGroup as ValueSetGroup);
 
         if (i < hashEntries.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 10));
@@ -940,15 +971,12 @@ export async function POST(request: NextRequest) {
     // Get all concepts from the map for combined SQL output
     const concepts = Array.from(allConceptsMap.values());
 
-    // Format for SQL (all codes combined)
-    const sqlFormatted = formatForSql(concepts.map((c) => c.code));
-
     const result: ExpandedCodeSet = {
       featureId,
       featureName,
       concepts,
       totalCount: concepts.length,
-      sqlFormattedCodes: sqlFormatted,
+      sqlFormattedCodes: rawMode ? '' : formatForSql(concepts.map((c) => c.code)),
       expandedAt: new Date().toISOString(),
       equivalenceFilterSetting: equivalenceFilter,
       valueSetGroups: valueSetGroups.length > 0 ? valueSetGroups : undefined,

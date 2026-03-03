@@ -313,10 +313,47 @@ export interface ExpandCodesRequest {
   displayNames?: string[];
   excludedCodes: string[];
   includeChildren: boolean[];
-  isRefset?: boolean[]; // Track which codes are refsets
-  codeSystems?: string[]; // Code system for each code (e.g., "SNOMED_CONCEPT", "EMIS")
-  valueSetMapping?: ValueSetMapping[]; // Track which codes belong to which ValueSet
-  equivalenceFilter?: EquivalenceFilter; // ConceptMap equivalence filter setting
+  isRefset?: boolean[];
+  codeSystems?: string[];
+  valueSetMapping?: ValueSetMapping[];
+  equivalenceFilter?: EquivalenceFilter;
+  // Pre-computed maps for batch mode — skips translation/resolution server-side
+  preComputedTranslations?: Record<string, TranslatedCode | null>;
+  preComputedHistorical?: Record<string, string>;
+  // Returns lighter response without metadata assembly
+  rawMode?: boolean;
+}
+
+// === Batch Translation/Resolution API Types ===
+
+export interface TranslateCodesRequest {
+  codes: string[];
+  equivalenceFilter: EquivalenceFilter;
+}
+
+export interface TranslateCodesResponse {
+  success: boolean;
+  translations?: Record<string, TranslatedCode | null>;
+  error?: string;
+}
+
+export interface ResolveHistoricalRequest {
+  conceptIds: string[];
+}
+
+export interface ResolveHistoricalResponse {
+  success: boolean;
+  resolutions?: Record<string, { currentConceptId: string; isHistorical: boolean; display?: string }>;
+  error?: string;
+}
+
+export interface RawValueSetExpansion {
+  concepts: SnomedConcept[];
+  parentCodes: string[];
+  eclExpression?: string;
+  rf2RefsetIds: string[];
+  successfulSctConstCodes: string[];
+  sctConstNoProducts: Record<string, { substanceCode: string; displayName: string }>;
 }
 
 export interface ValueSetMapping {

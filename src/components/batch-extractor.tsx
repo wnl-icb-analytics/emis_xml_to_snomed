@@ -12,7 +12,10 @@ import { Package, Download, FileText, X, Loader2, CheckCircle2, AlertCircle, XCi
 import { loadParsedXmlData } from '@/lib/storage';
 import { ExtractionFileList } from '@/components/extraction-file-list';
 import { ExtractionDataModel } from '@/components/extraction-data-model';
-import { expandValueSet } from '@/lib/valueset-expansion';
+import { prepareValueSetForExpansion } from '@/lib/valueset-expansion';
+import { assembleValueSetData } from '@/lib/batch-assembly';
+import { buildFormattedEclExpression } from '@/lib/ecl-builder';
+import { TranslatedCode, RawValueSetExpansion } from '@/lib/types';
 import { generateValueSetHash, generateValueSetFriendlyName, generateValueSetId } from '@/lib/valueset-utils';
 import { formatTime, formatTimeNatural } from '@/lib/time-utils';
 import { convertToCSV } from '@/lib/csv-utils';
@@ -180,7 +183,50 @@ export default function BatchExtractor() {
     try {
       const totalReports = selectedReports.length;
 
-      // Step 1: Build list of all ValueSets with their hashes
+      // Helper: fetch API with retry for transient errors
+      const fetchApi = async (url: string, body: any, maxRetries = 3): Promise<any> => {
+        let lastError: Error | undefined;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            const text = await response.text();
+            if (!text.trim().startsWith('{') && !text.trim().startsWith('[')) {
+              if (response.status === 504 || response.status === 408) {
+                throw new Error(`Request timeout (${response.status}). The terminology server may be overloaded.`);
+              } else if (response.status === 429) {
+                throw new Error('Rate limited by server. Please wait and try again.');
+              } else if (response.status >= 500) {
+                throw new Error(`Server error (${response.status}).`);
+              }
+              throw new Error(`Unexpected response (${response.status}).`);
+            }
+            const data = JSON.parse(text);
+            if (!response.ok || !data.success) {
+              throw new Error(data.error || `API error: ${response.status}`);
+            }
+            return data;
+          } catch (error) {
+            lastError = error as Error;
+            const msg = lastError.message || '';
+            const isRetryable = msg.includes('504') || msg.includes('502') || msg.includes('503')
+              || msg.includes('timeout') || msg.includes('429') || msg.includes('overloaded');
+            if (isRetryable && attempt < maxRetries) {
+              const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 30000);
+              console.log(`Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms: ${msg.substring(0, 80)}`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
+            throw error;
+          }
+        }
+        throw lastError || new Error('Max retries exceeded');
+      };
+
+      // === Phase 1: Collect all ValueSets with their hashes ===
       interface ValueSetInstance {
         report: EmisReport;
         reportIndex: number;
@@ -189,14 +235,13 @@ export default function BatchExtractor() {
         hash: string;
         codes: string[];
       }
-      
+
       const allInstances: ValueSetInstance[] = [];
-      
+
       for (let reportIndex = 0; reportIndex < selectedReports.length; reportIndex++) {
         const report = selectedReports[reportIndex];
-        
-        // Add report row to reports table
-        const reportRow = {
+
+        normalizedData.reports.push({
           report_id: report.id,
           report_xml_id: report.xmlId,
           report_name: report.name,
@@ -208,34 +253,29 @@ export default function BatchExtractor() {
           xml_file_name: report.rule.split(' > ')[0] || 'unknown.xml',
           equivalence_filter_setting: equivalenceFilter,
           parsed_at: new Date().toISOString(),
-        };
-        normalizedData.reports.push(reportRow);
-        
-        for (let vsIndex = 0; vsIndex < report.valueSets.length; vsIndex++) {
-          const vs = report.valueSets[vsIndex];
+        });
+
+        // Deduplicate ValueSets within report by code content (matching explore mode logic)
+        const reportCodeHashToIndex = new Map<string, number>();
+        let reportVsCounter = 0;
+        for (const vs of report.valueSets) {
           const codes = vs.values.map((v: any) => v.code).sort();
+          const codeKey = codes.join(',');
           const hash = generateValueSetHash(codes);
-          
-          allInstances.push({
-            report,
-            reportIndex,
-            vsIndex,
-            vs,
-            hash,
-            codes,
-          });
+
+          if (reportCodeHashToIndex.has(codeKey)) continue; // skip duplicate within report
+          const vsIndex = reportVsCounter++;
+          reportCodeHashToIndex.set(codeKey, vsIndex);
+
+          allInstances.push({ report, reportIndex, vsIndex, vs, hash, codes });
         }
       }
 
-      // Step 2: Group by hash - only expand unique hashes
-      // Also build hash->dedupIndex so identical code sets share the same _vs number
+      // Group by hash — only expand unique hashes
       const hashGroups = new Map<string, ValueSetInstance[]>();
-      const hashToDedupIndex = new Map<string, number>();
-      let dedupCounter = 0;
       for (const instance of allInstances) {
         if (!hashGroups.has(instance.hash)) {
           hashGroups.set(instance.hash, []);
-          hashToDedupIndex.set(instance.hash, dedupCounter++);
         }
         hashGroups.get(instance.hash)!.push(instance);
       }
@@ -243,25 +283,125 @@ export default function BatchExtractor() {
       const uniqueHashes = Array.from(hashGroups.keys());
       const totalUniqueValueSets = uniqueHashes.length;
       const totalInstanceCount = allInstances.length;
-      
+
       console.log(`Deduplication: ${totalInstanceCount} ValueSet instances -> ${totalUniqueValueSets} unique code sets`);
 
-      // Step 3: Expand unique hashes sequentially with 10ms gap to avoid overwhelming server
-      const REQUEST_DELAY_MS = 10;
-      const expandedByHash = new Map<string, any>(); // hash -> expansion result
-      let completedCount = 0;
-
+      // Collect ALL unique codes across all unique ValueSets for global translation
+      const allUniqueCodes = new Set<string>();
       for (const hash of uniqueHashes) {
-        // Check cancellation
+        const template = hashGroups.get(hash)![0];
+        template.vs.values.forEach((v: any) => allUniqueCodes.add(v.code));
+        template.vs.exceptions.forEach((e: any) => allUniqueCodes.add(e.code));
+      }
+      console.log(`Collected ${allUniqueCodes.size} unique codes for global translation`);
+
+      if (cancellationRef.current) {
+        setStatus('idle'); setProcessingStatus(null);
+        setIsExtracting(false); setContextIsExtracting(false);
+        return;
+      }
+
+      // === Phase 2: Global translation (chunked — each code is an HTTP request server-side) ===
+      const TRANSLATE_CHUNK_SIZE = 200;
+      const allCodesArray = Array.from(allUniqueCodes);
+      const globalTranslations: Record<string, TranslatedCode | null> = {};
+      const translateChunkCount = Math.ceil(allCodesArray.length / TRANSLATE_CHUNK_SIZE);
+
+      for (let i = 0; i < allCodesArray.length; i += TRANSLATE_CHUNK_SIZE) {
         if (cancellationRef.current) {
-          setStatus('idle');
-          setProcessingStatus(null);
-          setIsExtracting(false);
-          setContextIsExtracting(false);
+          setStatus('idle'); setProcessingStatus(null);
+          setIsExtracting(false); setContextIsExtracting(false);
           return;
         }
 
-        // Update status
+        const chunkIndex = Math.floor(i / TRANSLATE_CHUNK_SIZE) + 1;
+        const chunk = allCodesArray.slice(i, i + TRANSLATE_CHUNK_SIZE);
+
+        setProcessingStatus({
+          currentReport: 0, totalReports: totalUniqueValueSets,
+          reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
+          currentValueSet: 0, totalValueSets: totalUniqueValueSets,
+          message: `Translating codes (batch ${chunkIndex}/${translateChunkCount}, ${Math.min(i + TRANSLATE_CHUNK_SIZE, allCodesArray.length)}/${allCodesArray.length})...`,
+        });
+
+        const translateData = await fetchApi('/api/terminology/translate', {
+          codes: chunk,
+          equivalenceFilter,
+        });
+        Object.assign(globalTranslations, translateData.translations || {});
+      }
+
+      const translatedCount = Object.values(globalTranslations).filter(t => t !== null).length;
+      console.log(`Global translation: ${translatedCount}/${allUniqueCodes.size} codes translated`);
+
+      // === Phase 3: Global historical resolution (chunked) ===
+      const snomedCodesToResolve = new Set<string>();
+      for (const [code, translated] of Object.entries(globalTranslations)) {
+        if (translated) {
+          snomedCodesToResolve.add(translated.code);
+        } else {
+          snomedCodesToResolve.add(code);
+        }
+      }
+      for (const code of allUniqueCodes) {
+        if (!(code in globalTranslations)) {
+          snomedCodesToResolve.add(code);
+        }
+      }
+
+      const RESOLVE_CHUNK_SIZE = 500;
+      const resolveArray = Array.from(snomedCodesToResolve);
+      const globalHistorical: Record<string, string> = {};
+      const resolveChunkCount = Math.ceil(resolveArray.length / RESOLVE_CHUNK_SIZE);
+
+      for (let i = 0; i < resolveArray.length; i += RESOLVE_CHUNK_SIZE) {
+        if (cancellationRef.current) {
+          setStatus('idle'); setProcessingStatus(null);
+          setIsExtracting(false); setContextIsExtracting(false);
+          return;
+        }
+
+        const chunkIndex = Math.floor(i / RESOLVE_CHUNK_SIZE) + 1;
+        const chunk = resolveArray.slice(i, i + RESOLVE_CHUNK_SIZE);
+
+        setProcessingStatus({
+          currentReport: 0, totalReports: totalUniqueValueSets,
+          reportName: `${totalInstanceCount} instances across ${totalReports} reports`,
+          currentValueSet: 0, totalValueSets: totalUniqueValueSets,
+          message: `Resolving historical concepts (batch ${chunkIndex}/${resolveChunkCount}, ${Math.min(i + RESOLVE_CHUNK_SIZE, resolveArray.length)}/${resolveArray.length})...`,
+        });
+
+        const resolveData = await fetchApi('/api/terminology/resolve-historical', {
+          conceptIds: chunk,
+        });
+
+        for (const [conceptId, resolution] of Object.entries(resolveData.resolutions || {})) {
+          const res = resolution as { currentConceptId: string; isHistorical: boolean };
+          if (res.isHistorical) {
+            globalHistorical[conceptId] = res.currentConceptId;
+          }
+        }
+      }
+      console.log(`Historical resolution: ${Object.keys(globalHistorical).length} concepts updated`);
+
+      if (cancellationRef.current) {
+        setStatus('idle'); setProcessingStatus(null);
+        setIsExtracting(false); setContextIsExtracting(false);
+        return;
+      }
+
+      // === Phase 4: Per-ValueSet expansion with pre-computed maps (sequential, 10ms delay) ===
+      const REQUEST_DELAY_MS = 10;
+      const expandedByHash = new Map<string, RawValueSetExpansion>();
+      let completedCount = 0;
+
+      for (const hash of uniqueHashes) {
+        if (cancellationRef.current) {
+          setStatus('idle'); setProcessingStatus(null);
+          setIsExtracting(false); setContextIsExtracting(false);
+          return;
+        }
+
         setProcessingStatus({
           currentReport: completedCount + 1,
           totalReports: totalUniqueValueSets,
@@ -271,155 +411,122 @@ export default function BatchExtractor() {
           message: `Expanding ValueSet ${completedCount + 1} of ${totalUniqueValueSets}`,
         });
 
-        // Expand single ValueSet with retry for transient errors (504, 502, etc.)
-        const instances = hashGroups.get(hash)!;
-        const template = instances[0];
-        const MAX_RETRIES = 3;
+        const template = hashGroups.get(hash)![0];
+        const prepared = prepareValueSetForExpansion(template.vs, 0);
 
-        let chunkResult: { hash: string; result: any; error: Error | undefined };
-        let lastError: Error | undefined;
+        try {
+          const data = await fetchApi('/api/terminology/expand', {
+            featureId: template.report.id,
+            featureName: template.report.name,
+            ...prepared,
+            equivalenceFilter,
+            preComputedTranslations: globalTranslations,
+            preComputedHistorical: globalHistorical,
+            rawMode: true,
+          });
 
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          try {
-            const result = await expandValueSet(
-              template.report.id,
-              template.report.name,
-              template.vs,
-              0, // Index doesn't matter for expansion, only for naming
-              equivalenceFilter
-            );
-            chunkResult = { hash, result, error: undefined };
-            lastError = undefined;
-            break;
-          } catch (error) {
-            lastError = error as Error;
-            const msg = lastError.message || '';
-            const isRetryable = msg.includes('504') || msg.includes('502') || msg.includes('503')
-              || msg.includes('timeout') || msg.includes('429') || msg.includes('overloaded');
-
-            if (isRetryable && attempt < MAX_RETRIES) {
-              const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 30000);
-              console.log(`Retry ${attempt + 1}/${MAX_RETRIES} for ValueSet hash ${hash} after ${Math.round(delay)}ms (${msg.substring(0, 80)})`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            }
-          }
-        }
-
-        chunkResult ??= { hash, result: null, error: lastError };
-
-        const chunkResults = [chunkResult];
-
-        // Check for serious errors
-        for (const { hash, result, error } of chunkResults) {
-          if (error) {
-            const errorMessage = error.message || String(error);
-            const isFhirApiError = (error as any).name === 'FhirApiError';
-            const is404Error = isFhirApiError && (error as any).status === 404;
-
-            // Detect different error categories
-            const isTimeoutError = (
-              errorMessage.toLowerCase().includes('timeout') ||
-              errorMessage.includes('did not respond') ||
-              errorMessage.includes('504') ||
-              errorMessage.includes('408')
-            );
-
-            const isRateLimitError = (
-              errorMessage.toLowerCase().includes('rate limit') ||
-              errorMessage.includes('429')
-            );
-
-            const isServerError = (
-              errorMessage.toLowerCase().includes('server error') ||
-              errorMessage.includes('500') ||
-              errorMessage.includes('502') ||
-              errorMessage.includes('503')
-            );
-
-            const isNetworkError = (
-              errorMessage.includes('Network error') ||
-              errorMessage.includes('Unable to connect') ||
-              errorMessage.includes('internet connection') ||
-              errorMessage.toLowerCase().includes('fetch')
-            );
-
-            const isUnexpectedResponse = (
-              errorMessage.toLowerCase().includes('unexpected response') ||
-              errorMessage.toLowerCase().includes('failed to parse')
-            );
-
-            const isSeriousError = isTimeoutError || isRateLimitError || isServerError || isNetworkError || isUnexpectedResponse || (isFhirApiError && !is404Error);
-
-            if (isSeriousError) {
-              const instances = hashGroups.get(hash)!;
-              console.error(`Error expanding ValueSet hash ${hash}:`, error);
-
-              // Preserve original error message (which now has helpful context)
-              throw new Error(errorMessage);
-            } else if (is404Error) {
-              console.warn(`ValueSet hash ${hash} returned 404 (code not found), continuing...`);
-            } else {
-              console.error(`Error expanding ValueSet hash ${hash}:`, error);
-              throw error;
-            }
+          // In rawMode, valueSetGroups[0] contains the RawValueSetExpansion
+          const raw: RawValueSetExpansion = data.data?.valueSetGroups?.[0] || {
+            concepts: data.data?.concepts || [],
+            parentCodes: [],
+            rf2RefsetIds: [],
+            successfulSctConstCodes: [],
+            sctConstNoProducts: {},
+          };
+          expandedByHash.set(hash, raw);
+        } catch (error) {
+          const msg = (error as Error).message || '';
+          const is404 = msg.includes('404') && !msg.includes('timeout');
+          if (is404) {
+            console.warn(`ValueSet hash ${hash} returned 404, continuing...`);
+            expandedByHash.set(hash, {
+              concepts: [], parentCodes: [],
+              rf2RefsetIds: [], successfulSctConstCodes: [],
+              sctConstNoProducts: {},
+            });
           } else {
-            expandedByHash.set(hash, result);
+            throw error;
           }
         }
 
-        // Update progress
         completedCount += 1;
 
         if (startTimeRef.current && completedCount > 0) {
           const elapsedSeconds = (Date.now() - startTimeRef.current) / 1000;
           const avgTimePerHash = elapsedSeconds / completedCount;
           const remainingHashes = totalUniqueValueSets - completedCount;
-
-          if (remainingHashes > 0) {
-            const estimatedSecondsRemaining = Math.ceil(remainingHashes * avgTimePerHash);
-            setRemainingTime(Math.max(0, estimatedSecondsRemaining));
-          } else {
-            setRemainingTime(0);
-          }
+          setRemainingTime(remainingHashes > 0 ? Math.max(0, Math.ceil(remainingHashes * avgTimePerHash)) : 0);
         }
 
-        const totalProgress = (completedCount / totalUniqueValueSets) * 100;
-        setProgress(Math.round(totalProgress));
+        setProgress(Math.round((completedCount / totalUniqueValueSets) * 100));
 
-        // Add delay between requests to avoid overwhelming the server
         if (completedCount < totalUniqueValueSets) {
           await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
         }
       }
 
-      // Step 4: Propagate results to all instances that share each hash
+      // === Phase 5: Client-side assembly ===
+      const expandedAt = new Date().toISOString();
+
       for (const instance of allInstances) {
-        const result = expandedByHash.get(instance.hash);
-        if (!result?.success || !result?.data?.valueSetGroups) continue;
-        
-        const templateGroup = result.data.valueSetGroups[0];
-        if (!templateGroup) continue;
+        const rawExpansion = expandedByHash.get(instance.hash);
+        if (!rawExpansion) continue;
 
-        // Use deduplicated index so identical code sets share the same _vs number
-        const dedupIndex = hashToDedupIndex.get(instance.hash) ?? instance.vsIndex;
-        const valueSetId = generateValueSetId(instance.report.id, instance.hash, dedupIndex);
-        const friendlyName = generateValueSetFriendlyName(instance.report.name, dedupIndex);
+        const prepared = prepareValueSetForExpansion(instance.vs, 0);
+        const codeIndices = prepared.parentCodes.map((_: string, idx: number) => idx);
 
-        // Add valueset row
+        // Assemble metadata client-side
+        const assembled = assembleValueSetData(
+          rawExpansion,
+          prepared.parentCodes,
+          codeIndices,
+          prepared.excludedCodes,
+          prepared.displayNames,
+          prepared.codeSystems,
+          prepared.includeChildren,
+          prepared.isRefset,
+          globalTranslations,
+          globalHistorical,
+        );
+
+        // Build ECL expression client-side from resolved SNOMED codes
+        const eclValues = prepared.parentCodes.map((code: string, idx: number) => {
+          const translated = globalTranslations[code];
+          const snomedCode = translated?.code || code;
+          const currentCode = globalHistorical[snomedCode] || snomedCode;
+          return {
+            code: currentCode,
+            displayName: prepared.displayNames[idx],
+            includeChildren: prepared.includeChildren[idx],
+            isRefset: prepared.isRefset[idx],
+          };
+        });
+        const resolvedExcludedCodes = prepared.excludedCodes
+          .filter((code: string) => !!globalTranslations[code])
+          .map((code: string) => {
+            const translated = globalTranslations[code]!;
+            return globalHistorical[translated.code] || translated.code;
+          });
+        const eclExpression = buildFormattedEclExpression(eclValues, resolvedExcludedCodes);
+
+        const valueSetId = generateValueSetId(instance.report.id, instance.hash, instance.vsIndex);
+        const friendlyName = generateValueSetFriendlyName(instance.report.name, instance.vsIndex);
+
+        // Valueset row
         normalizedData.valuesets.push({
           valueset_id: valueSetId,
           report_id: instance.report.id,
-          valueset_index: dedupIndex,
+          valueset_index: instance.vsIndex,
           valueset_hash: instance.hash,
           valueset_friendly_name: friendlyName,
-          code_system: templateGroup.originalCodes?.[0]?.codeSystem || '',
-          ecl_expression: templateGroup.eclExpression || '',
-          expansion_error: templateGroup.expansionError || '',
-          expanded_at: result.data.expandedAt,
+          code_system: assembled.originalCodes?.[0]?.codeSystem || '',
+          ecl_expression: eclExpression || '',
+          expansion_error: assembled.expansionError || '',
+          expanded_at: expandedAt,
         });
 
-        // Add original codes (shared across instances with same hash)
-        templateGroup.originalCodes?.forEach((oc: any, idx: number) => {
+        // Original codes
+        assembled.originalCodes?.forEach((oc, idx) => {
           normalizedData.originalCodes.push({
             original_code_id: `${valueSetId}-oc${idx}`,
             valueset_id: valueSetId,
@@ -433,9 +540,9 @@ export default function BatchExtractor() {
           });
         });
 
-        // Add expanded concepts (shared across instances with same hash)
-        const parentCodesSet = new Set(templateGroup.parentCodes || []);
-        templateGroup.concepts?.forEach((concept: any, idx: number) => {
+        // Expanded concepts
+        const parentCodesSet = new Set(assembled.parentCodes || []);
+        assembled.concepts?.forEach((concept, idx) => {
           normalizedData.expandedConcepts.push({
             concept_id: `${valueSetId}-c${idx}`,
             valueset_id: valueSetId,
@@ -447,8 +554,8 @@ export default function BatchExtractor() {
           });
         });
 
-        // Add failed codes
-        templateGroup.failedCodes?.forEach((failed: any, idx: number) => {
+        // Failed codes
+        assembled.failedCodes?.forEach((failed, idx) => {
           normalizedData.failedCodes.push({
             failed_code_id: `${valueSetId}-failed${idx}`,
             valueset_id: valueSetId,
@@ -459,8 +566,8 @@ export default function BatchExtractor() {
           });
         });
 
-        // Add exceptions
-        templateGroup.exceptions?.forEach((exception: any, excIdx: number) => {
+        // Exceptions
+        assembled.exceptions?.forEach((exception, excIdx) => {
           normalizedData.exceptions.push({
             exception_id: `${valueSetId}-exc${excIdx}`,
             valueset_id: valueSetId,
@@ -474,8 +581,7 @@ export default function BatchExtractor() {
 
       setExtractedData(normalizedData);
       setProcessingStatus(null);
-      // Store final elapsed time - calculate one final time to ensure accuracy using ref
-      const finalTime = startTimeRef.current ? Math.floor((Date.now() - startTimeRef.current) / 1000) : (elapsedTime || 0);
+      const finalTime = startTimeRef.current ? Math.floor((Date.now() - startTimeRef.current) / 1000) : 0;
       setTotalTime(finalTime);
       setStatus('completed');
       extractionCompleted = true;
