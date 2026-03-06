@@ -3,9 +3,14 @@ import type {
   CriteriaGroup,
   EmisReport,
   EmisValueSet,
+  DateRange,
+  RangeBoundary,
   SearchCriterion,
+  SearchRestriction,
+  ColumnFilter,
+  RestrictionCondition,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatRelationship, formatRestriction } from '@/lib/rule-format-utils';
+import { formatColumnFilterRange, formatOperator, formatRelationship, formatRestriction, formatRangeBoundary } from '@/lib/rule-format-utils';
 import { generateValueSetFriendlyName } from '@/lib/valueset-utils';
 
 export interface ValueSetSummary {
@@ -29,6 +34,69 @@ export interface CriterionDisplayData {
   extraValueSets: EmisValueSet[];
   filters: { label: string; value: string }[];
   restrictions: { label: string; value: string }[];
+}
+
+export interface RangeBoundarySummary {
+  operator: string | null;
+  operatorSymbol: string | null;
+  value: string | null;
+  unit: string | null;
+  relation: string | null;
+  rendered: string;
+}
+
+export interface DateRangeSummary {
+  from: RangeBoundarySummary | null;
+  to: RangeBoundarySummary | null;
+  rendered: string;
+}
+
+export interface CriterionFilterSummary {
+  columns: string[];
+  displayName: string | null;
+  operator: string | null;
+  operatorSymbol: string | null;
+  singleValue: string | null;
+  rendered: string;
+  range: DateRangeSummary | null;
+  valueSets: ValueSetSummary[];
+}
+
+export interface RestrictionConditionSummary {
+  column: string;
+  operator: string;
+  operatorSymbol: string;
+  valueSets: string[];
+  rangeValues: string[];
+}
+
+export interface CriterionRestrictionSummary {
+  type: string;
+  description: string;
+  recordCount: number | null;
+  direction: string | null;
+  conditions: RestrictionConditionSummary[];
+}
+
+export interface RelationshipSummary {
+  parentColumn: string | null;
+  childColumn: string | null;
+  rendered: string;
+  range: DateRangeSummary | null;
+}
+
+export interface CriterionLogicSummary {
+  id: string;
+  displayName: string;
+  table: string;
+  negation: boolean;
+  rendered: string;
+  relationship: RelationshipSummary | null;
+  valueSets: ValueSetSummary[];
+  extraValueSets: ValueSetSummary[];
+  filters: CriterionFilterSummary[];
+  restrictions: CriterionRestrictionSummary[];
+  linkedCriteria: CriterionLogicSummary[];
 }
 
 export interface ReportCounts {
@@ -56,6 +124,9 @@ export interface RuleDecisionSummary {
   clauseType: 'must-match' | 'must-not-match' | 'include-if-match' | 'include-if-not-match' | 'informational';
   clauseText: string;
   criteria: string[];
+  criteriaDetails: CriterionLogicSummary[];
+  populationCriteria: Array<{ xmlId: string; searchName: string }>;
+  libraryItems: LibraryItemReferenceSummary[];
 }
 
 export interface ParentChainEntry {
@@ -338,6 +409,104 @@ function buildValueSetSummary(vs: EmisValueSet, friendlyNameMap: Map<string, str
   };
 }
 
+function buildRangeBoundarySummary(boundary: RangeBoundary | undefined, column?: string): RangeBoundarySummary | null {
+  if (!boundary) return null;
+  const operatorSymbol = boundary.operator ? formatOperator(boundary.operator) : null;
+  const rendered = (!boundary.unit && !boundary.relation)
+    ? [operatorSymbol, boundary.value].filter(Boolean).join(' ').trim()
+    : formatColumnFilterRange({ from: boundary }, column) || formatRangeBoundary(boundary);
+  return {
+    operator: boundary.operator || null,
+    operatorSymbol,
+    value: boundary.value || null,
+    unit: boundary.unit || null,
+    relation: boundary.relation || null,
+    rendered,
+  };
+}
+
+function buildDateRangeSummary(range: DateRange | undefined, column?: string): DateRangeSummary | null {
+  if (!range) return null;
+  return {
+    from: buildRangeBoundarySummary(range.from, column),
+    to: buildRangeBoundarySummary(range.to, column),
+    rendered: formatColumnFilterRange(range, column),
+  };
+}
+
+function buildRestrictionConditionSummary(condition: RestrictionCondition): RestrictionConditionSummary {
+  return {
+    column: condition.column,
+    operator: condition.operator,
+    operatorSymbol: formatOperator(condition.operator),
+    valueSets: condition.valueSets ?? [],
+    rangeValues: condition.rangeValues ?? [],
+  };
+}
+
+function buildRestrictionSummary(restriction: SearchRestriction): CriterionRestrictionSummary {
+  return {
+    type: restriction.type,
+    description: restriction.description,
+    recordCount: restriction.recordCount ?? null,
+    direction: restriction.direction ?? null,
+    conditions: (restriction.conditions ?? []).map(buildRestrictionConditionSummary),
+  };
+}
+
+function buildFilterSummary(
+  filter: ColumnFilter,
+  friendlyNameMap: Map<string, string>,
+): CriterionFilterSummary {
+  const primaryColumn = filter.columns[0] || '';
+  const displayName = filter.displayName || filter.columns.join(', ') || null;
+  const renderedValue = formatColumnFilterRange(filter.range, primaryColumn) || filter.singleValue || '';
+  const rendered = renderedValue
+    ? `${displayName || primaryColumn}${filter.inNotIn ? ` ${filter.inNotIn}` : ''} ${renderedValue}`.trim()
+    : displayName || primaryColumn;
+
+  return {
+    columns: filter.columns,
+    displayName,
+    operator: filter.inNotIn || null,
+    operatorSymbol: filter.inNotIn ? formatOperator(filter.inNotIn) : null,
+    singleValue: filter.singleValue || null,
+    rendered,
+    range: buildDateRangeSummary(filter.range, primaryColumn),
+    valueSets: (filter.valueSets ?? []).map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
+  };
+}
+
+function buildRelationshipSummary(criterion: SearchCriterion): RelationshipSummary | null {
+  if (!criterion.relationship) return null;
+  return {
+    parentColumn: criterion.relationship.parentColumn || null,
+    childColumn: criterion.relationship.childColumn || null,
+    rendered: formatRelationship(criterion.relationship),
+    range: buildDateRangeSummary(criterion.relationship.rangeValue, criterion.relationship.childColumn),
+  };
+}
+
+function buildCriterionLogicSummary(
+  criterion: SearchCriterion,
+  friendlyNameMap: Map<string, string>,
+): CriterionLogicSummary {
+  const displayData = getCriterionDisplayData(criterion);
+  return {
+    id: criterion.id,
+    displayName: criterion.displayName || 'Unnamed criterion',
+    table: criterion.table,
+    negation: criterion.negation,
+    rendered: buildCriterionPhrase(criterion),
+    relationship: buildRelationshipSummary(criterion),
+    valueSets: displayData.dedupedValueSets.map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
+    extraValueSets: displayData.extraValueSets.map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
+    filters: criterion.columnFilters.map((filter) => buildFilterSummary(filter, friendlyNameMap)),
+    restrictions: criterion.restrictions.map(buildRestrictionSummary),
+    linkedCriteria: criterion.linkedCriteria.map((linked) => buildCriterionLogicSummary(linked, friendlyNameMap)),
+  };
+}
+
 export function getReportCounts(report: EmisReport): ReportCounts {
   const criteria: SearchCriterion[] = [];
   for (const group of report.criteriaGroups ?? []) {
@@ -399,12 +568,21 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
   };
 
   const addCriterion = (criterion: SearchCriterion, indent: string) => {
+    const criterionSummary = buildCriterionLogicSummary(criterion, friendlyNameMap);
     lines.push(`${indent}- ${criterion.displayName || 'Unnamed criterion'} [${criterion.table}]`);
     if (criterion.negation) {
       lines.push(`${indent}  - NOT`);
     }
-    if (criterion.relationship) {
-      lines.push(`${indent}  - Linked relationship: ${formatRelationship(criterion.relationship)}`);
+    if (criterionSummary.relationship) {
+      lines.push(`${indent}  - Linked relationship: ${criterionSummary.relationship.rendered}`);
+      if (criterionSummary.relationship.range) {
+        if (criterionSummary.relationship.range.from) {
+          lines.push(`${indent}    - From: ${criterionSummary.relationship.range.from.rendered}`);
+        }
+        if (criterionSummary.relationship.range.to) {
+          lines.push(`${indent}    - To: ${criterionSummary.relationship.range.to.rendered}`);
+        }
+      }
     }
 
     const { dedupedValueSets, extraValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
@@ -420,10 +598,43 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
     if (filters.length > 0) {
       const where = filters.map((filter) => (filter.label ? `${filter.label} ${filter.value}` : filter.value)).join(' AND ');
       lines.push(`${indent}  - Where: ${where}`);
+      for (const filter of criterionSummary.filters) {
+        lines.push(`${indent}    - Filter detail: ${filter.rendered}`);
+        if (filter.range?.from) {
+          lines.push(`${indent}      - From boundary: ${filter.range.from.rendered}`);
+        }
+        if (filter.range?.to) {
+          lines.push(`${indent}      - To boundary: ${filter.range.to.rendered}`);
+        }
+        if (filter.valueSets.length > 0) {
+          lines.push(`${indent}      - Filter ValueSets: ${filter.valueSets.map((vs) => `\`${vs.friendlyName}\``).join(', ')}`);
+        }
+      }
     }
     if (restrictions.length > 0) {
       const then = restrictions.map((restriction) => (restriction.label ? `${restriction.label} ${restriction.value}` : restriction.value)).join(' AND ');
       lines.push(`${indent}  - Then: ${then}`);
+      for (const restriction of criterionSummary.restrictions) {
+        lines.push(`${indent}    - Restriction detail: ${restriction.description}`);
+        if (restriction.recordCount !== null) {
+          lines.push(`${indent}      - Record count: ${restriction.recordCount}`);
+        }
+        if (restriction.direction) {
+          lines.push(`${indent}      - Direction: ${restriction.direction}`);
+        }
+        for (const condition of restriction.conditions) {
+          const conditionParts: string[] = [
+            `${condition.column} ${condition.operatorSymbol || condition.operator}`,
+          ];
+          if (condition.valueSets.length > 0) {
+            conditionParts.push(condition.valueSets.join(', '));
+          }
+          if (condition.rangeValues.length > 0) {
+            conditionParts.push(condition.rangeValues.join(' and '));
+          }
+          lines.push(`${indent}      - Condition: ${conditionParts.join(' | ')}`);
+        }
+      }
     }
     if (criterion.linkedCriteria.length > 0) {
       lines.push(`${indent}  - Linked criteria:`);
@@ -570,6 +781,7 @@ function clauseTextForType(clauseType: RuleDecisionSummary['clauseType'], clause
 
 function buildDecisionFlow(report: EmisReport, allReports: EmisReport[]): RuleDecisionSummary[] {
   const decisions: RuleDecisionSummary[] = [];
+  const friendlyNameMap = buildFriendlyNameMap(report);
 
   for (let idx = 0; idx < (report.criteriaGroups ?? []).length; idx++) {
     const group = report.criteriaGroups![idx];
@@ -590,6 +802,15 @@ function buildDecisionFlow(report: EmisReport, allReports: EmisReport[]): RuleDe
       clauseType,
       clauseText: clauseTextForType(clauseType, clauseText),
       criteria: group.criteria.map((criterion) => buildCriterionPhrase(criterion)),
+      criteriaDetails: group.criteria.map((criterion) => buildCriterionLogicSummary(criterion, friendlyNameMap)),
+      populationCriteria: group.populationCriteria.map((pc) => {
+        const match = allReports.find((candidate) => candidate.xmlId === pc.reportGuid);
+        return {
+          xmlId: pc.reportGuid,
+          searchName: match?.searchName || pc.reportGuid,
+        };
+      }),
+      libraryItems: (group.libraryItemRefs ?? []).map((ref) => buildLibraryItemReferenceSummary(ref, allReports)),
     });
   }
 
@@ -604,6 +825,9 @@ function buildDecisionFlow(report: EmisReport, allReports: EmisReport[]): RuleDe
       clauseType: 'informational',
       clauseText,
       criteria: group.criteria.map((criterion) => buildCriterionPhrase(criterion)),
+      criteriaDetails: group.criteria.map((criterion) => buildCriterionLogicSummary(criterion, friendlyNameMap)),
+      populationCriteria: [],
+      libraryItems: [],
     });
   }
 
@@ -732,6 +956,44 @@ function buildParentChain(report: EmisReport, allReports: EmisReport[]): ParentC
   return chain;
 }
 
+function addCriterionDetailMarkdown(lines: string[], criterion: CriterionLogicSummary, indent = '') {
+  lines.push(`${indent}- ${criterion.displayName} [${criterion.table}]${criterion.negation ? ' (NOT)' : ''}`);
+  if (criterion.valueSets.length > 0) {
+    lines.push(`${indent}  - ValueSets: ${criterion.valueSets.map((vs) => `\`${vs.friendlyName}\``).join(', ')}`);
+  }
+  if (criterion.extraValueSets.length > 0) {
+    lines.push(`${indent}  - Additional ValueSets: ${criterion.extraValueSets.map((vs) => `\`${vs.friendlyName}\``).join(', ')}`);
+  }
+  if (criterion.relationship) {
+    lines.push(`${indent}  - Relationship: ${criterion.relationship.rendered}`);
+  }
+  for (const filter of criterion.filters) {
+    lines.push(`${indent}  - Filter: ${filter.rendered}`);
+    if (filter.range?.from) {
+      lines.push(`${indent}    - From: ${filter.range.from.rendered}`);
+    }
+    if (filter.range?.to) {
+      lines.push(`${indent}    - To: ${filter.range.to.rendered}`);
+    }
+    if (filter.valueSets.length > 0) {
+      lines.push(`${indent}    - Filter ValueSets: ${filter.valueSets.map((vs) => `\`${vs.friendlyName}\``).join(', ')}`);
+    }
+  }
+  for (const restriction of criterion.restrictions) {
+    lines.push(`${indent}  - Restriction: ${restriction.description}`);
+    for (const condition of restriction.conditions) {
+      const parts = [`${condition.column} ${condition.operatorSymbol || condition.operator}`];
+      if (condition.valueSets.length > 0) parts.push(condition.valueSets.join(', '));
+      if (condition.rangeValues.length > 0) parts.push(condition.rangeValues.join(' and '));
+      lines.push(`${indent}    - Condition: ${parts.join(' | ')}`);
+    }
+  }
+  for (const linked of criterion.linkedCriteria) {
+    lines.push(`${indent}  - Linked criterion:`);
+    addCriterionDetailMarkdown(lines, linked, `${indent}    `);
+  }
+}
+
 function buildImplementationGuideMarkdown(report: EmisReport, allReports: EmisReport[]) {
   const currentSummary = buildAgentInterpretation(report, allReports);
   const parentChain = buildParentChain(report, allReports);
@@ -783,6 +1045,28 @@ function buildImplementationGuideMarkdown(report: EmisReport, allReports: EmisRe
     lines.push('');
     lines.push('Boolean logic:');
     lines.push(currentSummary.booleanLogic);
+  }
+  lines.push('');
+  lines.push('## Detailed Rule Logic');
+  for (const rule of currentSummary.decisionFlow) {
+    lines.push(`### ${rule.label}`);
+    lines.push(`- Clause type: ${rule.clauseType}`);
+    lines.push(`- Pass: ${rule.passAction}`);
+    lines.push(`- Fail: ${rule.failAction}`);
+    if (rule.operator) {
+      lines.push(`- Operator: ${rule.operator}`);
+    }
+    lines.push(`- Summary: ${rule.clauseText}`);
+    for (const population of rule.populationCriteria) {
+      lines.push(`- Population ref: ${population.searchName} (${population.xmlId})`);
+    }
+    for (const libraryItem of rule.libraryItems) {
+      lines.push(`- Library item: ${libraryItem.inferredName || 'Unknown library item'} (${libraryItem.ref})`);
+    }
+    for (const criterion of rule.criteriaDetails) {
+      addCriterionDetailMarkdown(lines, criterion);
+    }
+    lines.push('');
   }
   lines.push('');
   lines.push('## ValueSet Friendly Names');

@@ -41,6 +41,7 @@ export async function GET() {
     '- `report.libraryItems`: inferred library-item labels surfaced on report index entries.',
     '- `report.agentInterpretation.dependencies.libraryItems`: inferred library-item labels from wrapper reports in the same XML.',
     '- `report.agentInterpretation.decisionFlow`: per-rule decision summary.',
+    '- `report.agentInterpretation.decisionFlow[].criteriaDetails`: structured criterion detail including linked criteria, filters, operators, ranges, and restrictions.',
     '- `report.agentInterpretation.inclusionCriteria`: required/include clauses.',
     '- `report.agentInterpretation.exclusionCriteria`: exclusion clauses.',
     '- `report.agentInterpretation.booleanLogic`: compact boolean-like expression.',
