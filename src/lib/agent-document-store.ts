@@ -1,7 +1,5 @@
-import { promises as fs } from 'fs';
-import os from 'os';
-import path from 'path';
 import crypto from 'crypto';
+import { get, put } from '@vercel/blob';
 import type { EmisXmlDocument } from '@/lib/types';
 
 export interface AgentStoredDocument {
@@ -12,14 +10,10 @@ export interface AgentStoredDocument {
   data: EmisXmlDocument;
 }
 
-const STORE_DIR = path.join(os.tmpdir(), 'emis-xml-to-snomed-agent-docs');
+const AGENT_DOCUMENT_PREFIX = 'agent-documents/';
 
-async function ensureStoreDir() {
-  await fs.mkdir(STORE_DIR, { recursive: true });
-}
-
-function getDocumentPath(documentId: string) {
-  return path.join(STORE_DIR, `${documentId}.json`);
+function buildAgentDocumentPath(documentId: string): string {
+  return `${AGENT_DOCUMENT_PREFIX}${documentId}.json`;
 }
 
 export function hashXmlContent(xmlContent: string): string {
@@ -27,7 +21,6 @@ export function hashXmlContent(xmlContent: string): string {
 }
 
 export async function saveAgentDocument(fileName: string, xmlContent: string, data: EmisXmlDocument): Promise<AgentStoredDocument> {
-  await ensureStoreDir();
   const xmlSha256 = hashXmlContent(xmlContent);
   const documentId = crypto.randomUUID();
   const stored: AgentStoredDocument = {
@@ -37,19 +30,27 @@ export async function saveAgentDocument(fileName: string, xmlContent: string, da
     xmlSha256,
     data,
   };
-  await fs.writeFile(getDocumentPath(documentId), JSON.stringify(stored), 'utf8');
+
+  await put(buildAgentDocumentPath(documentId), JSON.stringify(stored), {
+    access: 'private',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: 'application/json',
+  });
+
   return stored;
 }
 
 export async function loadAgentDocument(documentId: string): Promise<AgentStoredDocument | null> {
-  await ensureStoreDir();
-  try {
-    const raw = await fs.readFile(getDocumentPath(documentId), 'utf8');
-    return JSON.parse(raw) as AgentStoredDocument;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return null;
-    }
-    throw error;
+  const blob = await get(buildAgentDocumentPath(documentId), {
+    access: 'private',
+    useCache: false,
+  });
+
+  if (!blob || blob.statusCode !== 200 || !blob.stream) {
+    return null;
   }
+
+  const raw = await new Response(blob.stream).text();
+  return JSON.parse(raw) as AgentStoredDocument;
 }
