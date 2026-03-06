@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 const exampleDocumentId = 'YOUR_DOCUMENT_ID';
 const exampleReportId = 'YOUR_REPORT_ID_OR_SEARCH_NAME';
+const deployedBaseUrl = 'https://emis-xml-to-snomed.vercel.app/api/agent';
 
 export async function GET() {
   const baseUrl = '/api/agent';
@@ -251,21 +252,21 @@ export async function GET() {
       },
     ],
     examples: {
-      curlLoadXml: `curl -X POST http://localhost:3000${baseUrl}/load-xml -F "xmlFile=@C:/path/to/file.xml"`,
+      curlLoadXml: `curl -X POST ${deployedBaseUrl}/load-xml -F "xmlFile=@C:/path/to/file.xml"`,
       queryListFiles: {
         method: 'GET',
-        url: `http://localhost:3000${baseUrl}/files`,
+        url: `${deployedBaseUrl}/files`,
       },
       queryLoadXmlFromBlob: {
         method: 'POST',
-        url: `http://localhost:3000${baseUrl}/load-xml-from-blob`,
+        url: `${deployedBaseUrl}/load-xml-from-blob`,
         body: {
           pathname: 'xml-files/example.xml',
         },
       },
       querySearchReports: {
         method: 'POST',
-        url: `http://localhost:3000${baseUrl}/query`,
+        url: `${deployedBaseUrl}/query`,
         body: {
           documentId: exampleDocumentId,
           action: 'searchReports',
@@ -274,7 +275,7 @@ export async function GET() {
       },
       queryGetReportLogic: {
         method: 'POST',
-        url: `http://localhost:3000${baseUrl}/query`,
+        url: `${deployedBaseUrl}/query`,
         body: {
           documentId: exampleDocumentId,
           action: 'getReportLogic',
@@ -283,7 +284,7 @@ export async function GET() {
       },
       queryGetImplementationGuide: {
         method: 'POST',
-        url: `http://localhost:3000${baseUrl}/query`,
+        url: `${deployedBaseUrl}/query`,
         body: {
           documentId: exampleDocumentId,
           action: 'getImplementationGuide',
