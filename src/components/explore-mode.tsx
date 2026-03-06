@@ -5,7 +5,7 @@ import { EmisReport, ExpandedCodeSet, EmisXmlDocument } from '@/lib/types';
 import CodeDisplay from '@/components/code-display';
 import RuleDisplay from '@/components/rule-display';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight, PlayCircle, FileX } from 'lucide-react';
+import { Loader2, FileText, AlertCircle, XCircle, ArrowUpRight, PlayCircle, FileX, Copy, Check } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { hasParsedXmlData, loadParsedXmlData } from '@/lib/storage';
 import { expandValueSet } from '@/lib/valueset-expansion';
@@ -33,6 +33,7 @@ export default function ExploreMode() {
   const cancellationRef = useRef(false);
   const [pendingReport, setPendingReport] = useState<EmisReport | null>(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [copiedAllRules, setCopiedAllRules] = useState(false);
 
   // Check if XML is already loaded in IndexedDB on mount
   useEffect(() => {
@@ -292,6 +293,7 @@ export default function ExploreMode() {
   };
 
   const breadcrumbs = getBreadcrumbs();
+  const hasRuleStructure = (selectedReport.criteriaGroups?.length ?? 0) > 0 || (selectedReport.columnGroups?.length ?? 0) > 0;
 
   // Report selected view
   return (
@@ -347,42 +349,56 @@ export default function ExploreMode() {
             </p>
           )}
           {selectedReport.parentType && (
-            <p className="text-sm text-muted-foreground mt-2">
-              <span className="font-medium">Population:</span>{' '}
-              {selectedReport.parentType === 'ACTIVE' && 'Currently registered patients'}
-              {selectedReport.parentType === 'ALL' && 'All patients (including deducted and deceased)'}
-              {selectedReport.parentType === 'POP' && selectedReport.parentReportId && (() => {
-                console.log('Looking for parent report:', selectedReport.parentReportId);
-                console.log('All reports xmlIds:', allReports.map(r => ({ xmlId: r.xmlId, name: r.searchName })));
-                const parentReport = allReports.find(r => r.xmlId === selectedReport.parentReportId);
-                console.log('Found parent report:', parentReport);
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium">Population:</span>{' '}
+                {selectedReport.parentType === 'ACTIVE' && 'Currently registered patients'}
+                {selectedReport.parentType === 'ALL' && 'All patients (including deducted and deceased)'}
+                {selectedReport.parentType === 'POP' && selectedReport.parentReportId && (() => {
+                  const parentReport = allReports.find(r => r.xmlId === selectedReport.parentReportId);
 
-                if (parentReport) {
-                  return (
-                    <>
-                      Based on{' '}
-                      <button
-                        onClick={() => {
-                          window.dispatchEvent(new CustomEvent('report-selected', { detail: parentReport }));
-                        }}
-                        className="inline-flex items-center text-primary hover:underline font-medium cursor-pointer"
-                      >
-                        "{parentReport.searchName}"
-                        <ArrowUpRight className="h-3.5 w-3.5" />
-                      </button>
-                      {' '}search results
-                    </>
-                  );
-                } else {
-                  return `Based on another search (${selectedReport.parentReportId})`;
-                }
-              })()}
-            </p>
+                  if (parentReport) {
+                    return (
+                      <>
+                        Based on{' '}
+                        <button
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('report-selected', { detail: parentReport }));
+                          }}
+                          className="inline-flex items-center text-primary hover:underline font-medium cursor-pointer"
+                        >
+                          "{parentReport.searchName}"
+                          <ArrowUpRight className="h-3.5 w-3.5" />
+                        </button>
+                        {' '}search results
+                      </>
+                    );
+                  } else {
+                    return `Based on another search (${selectedReport.parentReportId})`;
+                  }
+                })()}
+              </p>
+              {hasRuleStructure && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    window.dispatchEvent(new Event('copy-all-rules'));
+                    setCopiedAllRules(true);
+                    setTimeout(() => setCopiedAllRules(false), 1500);
+                  }}
+                  className="shrink-0"
+                >
+                  {copiedAllRules ? <Check className="h-4 w-4 mr-1 text-emerald-500" /> : <Copy className="h-4 w-4 mr-1" />}
+                  {copiedAllRules ? 'Copied rules' : 'Copy all rules'}
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
         {/* Rule display (structured view) or fallback to flat view */}
-        {(selectedReport.criteriaGroups?.length ?? 0) > 0 || (selectedReport.columnGroups?.length ?? 0) > 0 ? (
+        {hasRuleStructure ? (
           <>
             <RuleDisplay
               report={selectedReport}
