@@ -480,15 +480,15 @@ function ColumnGroupCard({
       <div className="flex items-center justify-between py-2.5 px-4 bg-gradient-to-r from-slate-700 to-slate-800 dark:from-slate-800 dark:to-slate-900 text-white rounded-t-xl">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-sm">{group.displayName}</span>
-          <Badge variant="outline" className="bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20 text-[10px] px-1.5">
+          <Badge variant="outline" className="bg-white/10 text-slate-100 border-white/15 text-[10px] px-1.5 shadow-sm">
             {group.logicalTableName}
           </Badge>
         </div>
         {/* Display columns */}
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-muted-foreground mr-1">Shows:</span>
+          <span className="text-[10px] text-slate-300 mr-1">Shows:</span>
           {group.listColumns.map(lc => (
-            <Badge key={lc.id} variant="outline" className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/20 text-[10px] px-1.5">
+            <Badge key={lc.id} variant="outline" className="bg-cyan-400/12 text-cyan-100 border-cyan-300/25 text-[10px] px-1.5 shadow-sm">
               {lc.displayName}
             </Badge>
           ))}
