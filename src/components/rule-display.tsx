@@ -10,7 +10,8 @@ import type {
   SearchCriterion,
   ValueSetGroup,
 } from '@/lib/types';
-import { formatColumnFilterRange, formatRestriction, formatRelationship } from '@/lib/rule-format-utils';
+import { formatRelationship } from '@/lib/rule-format-utils';
+import { buildLibraryItemReferenceSummary, buildRulesMarkdown, formatValueSetPreview, getCriterionDisplayData } from '@/lib/agent-report-utils';
 import { generateValueSetFriendlyName } from '@/lib/valueset-utils';
 import { BnfHint } from '@/components/bnf-hint';
 import { Card, CardContent } from '@/components/ui/card';
@@ -96,93 +97,6 @@ function actionLabel(action: string): string {
     case 'NEXT': return 'Next rule';
     default: return action;
   }
-}
-
-function formatValueSetPreview(vs: EmisValueSet): string {
-  const displayNames = vs.values
-    .map((v) => v.displayName)
-    .filter(Boolean);
-
-  if (displayNames.length > 0) {
-    const preview = displayNames.slice(0, 3).join(', ');
-    const remainder = displayNames.length > 3 ? ` +${displayNames.length - 3} more` : '';
-    return `${preview}${remainder}`;
-  }
-
-  const isRefsetOnly = vs.values.length > 0 && vs.values.every((v) => v.isRefset);
-  if (isRefsetOnly) {
-    return `Refset${vs.values.length > 1 ? 's' : ''}: ${vs.values.map((v) => v.code).join(', ')}`;
-  }
-
-  return vs.description || 'No display names';
-}
-
-function getCriterionDisplayData(criterion: SearchCriterion) {
-  // Deduplicate ValueSets by code content (same codes = same logical ValueSet)
-  const seenCodeHashes = new Set<string>();
-  const dedupedValueSets: EmisValueSet[] = [];
-  for (const vs of criterion.valueSets) {
-    const codeKey = vs.values.map((v) => v.code).sort().join(',');
-    if (!seenCodeHashes.has(codeKey)) {
-      seenCodeHashes.add(codeKey);
-      dedupedValueSets.push(vs);
-    }
-  }
-
-  // Column filter ValueSets: only show as extra ValueSet rows if they're READCODE filters
-  // Non-READCODE filters (e.g. PROBLEMSTATUS) are shown inline as filter conditions
-  const criterionVsIds = new Set(criterion.valueSets.map((vs) => vs.id));
-  const extraValueSets: EmisValueSet[] = [];
-  for (const cf of criterion.columnFilters) {
-    if (cf.valueSets && cf.columns[0]?.toUpperCase() === 'READCODE') {
-      for (const vs of cf.valueSets) {
-        const codeKey = vs.values.map((v) => v.code).sort().join(',');
-        if (!criterionVsIds.has(vs.id) && !seenCodeHashes.has(codeKey)) {
-          seenCodeHashes.add(codeKey);
-          extraValueSets.push(vs);
-          criterionVsIds.add(vs.id);
-        }
-      }
-    }
-  }
-
-  // Separate restrictions (record selection) from column filters (prerequisites)
-  const restrictions: { label: string; value: string }[] = [];
-  const filters: { label: string; value: string }[] = [];
-  for (const r of criterion.restrictions) {
-    restrictions.push({ label: '', value: formatRestriction(r) });
-  }
-  for (const cf of criterion.columnFilters) {
-    const primaryCol = cf.columns[0] || '';
-    const name = cf.displayName || cf.columns.join(', ');
-    const op = cf.inNotIn || '';
-    const rangeStr = formatColumnFilterRange(cf.range, primaryCol);
-    const singleVal = cf.singleValue;
-
-    // For non-READCODE column filters with ValueSets, show the ValueSet display names as the filter value
-    // Skip DRUG columns - these duplicate the ValueSet display above
-    if (cf.valueSets && cf.valueSets.length > 0 && primaryCol.toUpperCase() !== 'READCODE') {
-      const isDrugFilter = primaryCol.toUpperCase() === 'DRUG' ||
-        name.toUpperCase().startsWith('DRUG');
-      if (isDrugFilter) {
-        continue;
-      }
-      const vsNames = cf.valueSets.flatMap((vs) => vs.values.map((v) => v.displayName)).filter(Boolean);
-      if (vsNames.length > 0) {
-        const cleanLabel = name.replace(/\s*\(.*\)\s*$/, '').trim();
-        filters.push({ label: `${cleanLabel} =`, value: vsNames.join(', ') });
-        continue;
-      }
-    }
-
-    const valStr = rangeStr || singleVal || '';
-    if (valStr) {
-      const skipOp = op === 'IN' && (/^[<>=!]/.test(valStr) || /^[a-z]/i.test(valStr));
-      filters.push({ label: name, value: skipOp ? valStr : `${op ? op + ' ' : ''}${valStr}` });
-    }
-  }
-
-  return { dedupedValueSets, extraValueSets, filters, restrictions };
 }
 
 function CopyableId({ label, value }: { label: string; value: string }) {
@@ -272,131 +186,8 @@ export default function RuleDisplay({
     collectValueSets(cg.criteria);
   }
 
-  const buildRulesMarkdown = (): string => {
-    const lines: string[] = [];
-    const resolveReportName = (reportGuid: string): string => {
-      const ref = allReports.find((r) => r.xmlId === reportGuid);
-      return ref ? ref.searchName : `${reportGuid.slice(0, 8)}...`;
-    };
-    const getParentPopulation = (): string => {
-      if (report.parentType === 'ACTIVE') {
-        return 'Currently registered patients';
-      }
-      if (report.parentType === 'ALL') {
-        return 'All patients (including deducted and deceased)';
-      }
-      if (report.parentType === 'POP') {
-        if (!report.parentReportId) return 'Based on another search';
-        const parentReport = allReports.find((r) => r.xmlId === report.parentReportId);
-        if (parentReport) {
-          return `Based on "${parentReport.searchName}" search results`;
-        }
-        return `Based on another search (${report.parentReportId})`;
-      }
-      return report.parentType || 'Not specified';
-    };
-    const addValueSet = (vs: EmisValueSet, indent: string) => {
-      lines.push(`${indent}- ValueSet friendly name: \`${friendlyNameMap.get(vs.id) || '(not assigned)'}\``);
-      lines.push(`${indent}- Preview: ${formatValueSetPreview(vs)}`);
-      lines.push(`${indent}- Code count: ${vs.values.length}`);
-      lines.push(`${indent}- Code system: ${codeSystemLabel(vs.codeSystem)}`);
-      if (vs.description) {
-        lines.push(`${indent}- Cluster: ${vs.description}`);
-      }
-      if (vs.exceptions.length > 0) {
-        lines.push(`${indent}- Excluded codes: ${vs.exceptions.length}`);
-      }
-    };
-    const addCriterion = (criterion: SearchCriterion, indent: string) => {
-      lines.push(`${indent}- ${criterion.displayName || 'Unnamed criterion'} [${criterion.table}]`);
-      if (criterion.negation) {
-        lines.push(`${indent}  - NOT`);
-      }
-      if (criterion.relationship) {
-        lines.push(`${indent}  - Linked relationship: ${formatRelationship(criterion.relationship)}`);
-      }
-
-      const { dedupedValueSets, extraValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
-
-      if (dedupedValueSets.length > 0) {
-        lines.push(`${indent}  - ValueSets:`);
-        for (const vs of dedupedValueSets) addValueSet(vs, `${indent}    `);
-      }
-      if (extraValueSets.length > 0) {
-        lines.push(`${indent}  - Additional READCODE ValueSets:`);
-        for (const vs of extraValueSets) addValueSet(vs, `${indent}    `);
-      }
-      if (filters.length > 0) {
-        const where = filters.map((f) => (f.label ? `${f.label} ${f.value}` : f.value)).join(' AND ');
-        lines.push(`${indent}  - Where: ${where}`);
-      }
-      if (restrictions.length > 0) {
-        const then = restrictions.map((r) => (r.label ? `${r.label} ${r.value}` : r.value)).join(' AND ');
-        lines.push(`${indent}  - Then: ${then}`);
-      }
-      if (criterion.linkedCriteria.length > 0) {
-        lines.push(`${indent}  - Linked criteria:`);
-        for (const linked of criterion.linkedCriteria) addCriterion(linked, `${indent}    `);
-      }
-    };
-
-    lines.push(`# ${report.name}`);
-    lines.push(`Title: ${report.name}`);
-    if (report.searchName !== report.name) lines.push(`Search name: ${report.searchName}`);
-    if (report.description) lines.push(`Description: ${report.description}`);
-    lines.push(`Parent population: ${getParentPopulation()}`);
-    lines.push(`ValueSets: ${report.valueSets.length}`);
-    lines.push('');
-
-    if (groups.length > 0) {
-      for (let idx = 0; idx < groups.length; idx++) {
-        const group = groups[idx];
-        let ruleName = `Rule ${idx + 1}`;
-        if (groups.length > 1) {
-          if (idx === 0) ruleName += ' (Primary)';
-          else ruleName += ' (Additional)';
-        }
-        lines.push(`## ${ruleName}`);
-        lines.push(`Pass: ${actionLabel(group.actionIfTrue)}`);
-        lines.push(`Fail: ${actionLabel(group.actionIfFalse)}`);
-        if (group.populationCriteria.length > 0) {
-          for (const pc of group.populationCriteria) {
-            lines.push(`Patients included in search: ${resolveReportName(pc.reportGuid)}`);
-          }
-        }
-        if (group.criteria.length > 0) {
-          lines.push(`Criteria operator: ${group.memberOperator}`);
-          for (const criterion of group.criteria) addCriterion(criterion, '');
-        } else if (group.libraryItemRefs && group.libraryItemRefs.length > 0) {
-          lines.push(`Library item references: ${group.libraryItemRefs.join(', ')}`);
-        } else {
-          lines.push('No criteria in this rule.');
-        }
-        lines.push('');
-      }
-    }
-
-    if (colGroups.length > 0) {
-      lines.push('## Column Groups');
-      for (const cg of colGroups) {
-        lines.push(`### ${cg.displayName} [${cg.logicalTableName}]`);
-        if (cg.listColumns.length > 0) {
-          lines.push(`Shows: ${cg.listColumns.map((lc) => lc.displayName).join(', ')}`);
-        }
-        if (cg.criteria.length > 0) {
-          for (const criterion of cg.criteria) addCriterion(criterion, '');
-        } else {
-          lines.push('No criteria in this column.');
-        }
-        lines.push('');
-      }
-    }
-
-    return lines.join('\n').trim();
-  };
-
   const handleCopyAllRules = () => {
-    const markdown = buildRulesMarkdown();
+    const markdown = buildRulesMarkdown(report, allReports);
     navigator.clipboard.writeText(markdown);
   };
 
@@ -752,14 +543,7 @@ function PopulationRef({ pc, allReports }: { pc: { id: string; reportGuid: strin
 // --- LibraryItemRefs ---
 
 function LibraryItemRefs({ refs, allReports }: { refs: string[]; allReports: EmisReport[] }) {
-  // Try to resolve UUIDs against reports in this file
-  const resolved: EmisReport[] = [];
-  const unresolved: string[] = [];
-  for (const uuid of refs) {
-    const match = allReports.find(r => r.xmlId === uuid);
-    if (match) resolved.push(match);
-    else unresolved.push(uuid);
-  }
+  const inferred = refs.map((ref) => buildLibraryItemReferenceSummary(ref, allReports));
 
   return (
     <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 space-y-1.5">
@@ -769,32 +553,44 @@ function LibraryItemRefs({ refs, allReports }: { refs: string[]; allReports: Emi
           {refs.length} library item reference{refs.length !== 1 ? 's' : ''} — cannot be expanded here
         </p>
       </div>
-      {resolved.length > 0 && (
+      {inferred.some((item) => item.wrapperReports.length > 0) && (
         <div className="space-y-1">
-          {resolved.map(r => (
-            <div key={r.xmlId} className="flex items-center gap-2 text-xs">
-              <LinkIcon className="h-3 w-3 text-amber-600 dark:text-amber-400" />
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('report-selected', { detail: r }))}
-                className="text-primary hover:underline font-medium cursor-pointer inline-flex items-center"
-              >
-                {r.searchName}
-                <ArrowUpRight className="h-3 w-3 ml-0.5" />
-              </button>
+          {inferred.map((item) => (
+            <div key={item.ref} className="space-y-1">
+              {item.inferredName && (
+                <div className="text-xs text-amber-800 dark:text-amber-200">
+                  Inferred meaning: <span className="font-medium">{item.inferredName}</span>
+                </div>
+              )}
+              {item.wrapperReports.map((wrapper) => {
+                const report = allReports.find((candidate) => candidate.xmlId === wrapper.xmlId);
+                if (!report) return null;
+                return (
+                  <div key={wrapper.xmlId} className="flex items-center gap-2 text-xs">
+                    <LinkIcon className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent('report-selected', { detail: report }))}
+                      className="text-primary hover:underline font-medium cursor-pointer inline-flex items-center"
+                    >
+                      {wrapper.searchName}
+                      <ArrowUpRight className="h-3 w-3 ml-0.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
       )}
-      {unresolved.length > 0 && (
+      {inferred.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {unresolved.map((uuid, i) => (
-            <CopyableId key={i} label="" value={uuid} />
+          {inferred.map((item, i) => (
+            <CopyableId key={i} label="" value={item.ref} />
           ))}
         </div>
       )}
       <p className="text-[10px] text-muted-foreground">
-        The XML does not include names or contents for library items.
-        To resolve: open the search in EMIS, double-click each library item to expand it, save, and re-export.
+        The XML does not include the library item contents directly. Where possible, this view infers the likely concept from wrapper reports in the same export.
       </p>
     </div>
   );
