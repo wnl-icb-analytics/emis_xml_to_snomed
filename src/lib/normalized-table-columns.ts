@@ -60,6 +60,7 @@ export const normalizedTableColumns = {
     { key: 'exception_id', label: 'exception_id' },
     { key: 'valueset_id', label: 'valueset_id' },
     { key: 'original_excluded_code', label: 'original_excluded_code' },
+    { key: 'original_excluded_display', label: 'original_excluded_display' },
     { key: 'translated_to_snomed_code', label: 'translated_to_snomed_code' },
     { key: 'included_in_ecl', label: 'included_in_ecl' },
     { key: 'translation_error', label: 'translation_error' },

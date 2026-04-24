@@ -110,6 +110,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
         exception_id: `${group.valueSetId}-exc${excIdx}`,
         valueset_id: group.valueSetId,
         original_excluded_code: exception.originalExcludedCode,
+        original_excluded_display: exception.originalExcludedDisplay || '',
         translated_to_snomed_code: exception.translatedToSnomedCode || '',
         included_in_ecl: exception.includedInEcl || false,
         translation_error: exception.translationError || '',
@@ -408,6 +409,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">exception_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">valueset_id</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">original_excluded_code</TableHead>
+                <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">original_excluded_display</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translated_to_snomed_code</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">included_in_ecl</TableHead>
                 <TableHead className="h-7 px-2 py-0.5 text-xs font-semibold whitespace-nowrap">translation_error</TableHead>
@@ -422,6 +424,7 @@ export default function NormalisedDataView({ report, expandedCodes }: Normalised
                     </TableCell>
                     <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{group.valueSetId}</TableCell>
                     <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{exception.originalExcludedCode}</TableCell>
+                    <TableCell className="h-6 px-2 py-0.5 text-xs whitespace-nowrap">{exception.originalExcludedDisplay || ''}</TableCell>
                     <TableCell className="h-6 px-2 py-0.5 font-mono text-xs whitespace-nowrap">{exception.translatedToSnomedCode || ''}</TableCell>
                     <TableCell className="h-6 px-2 py-0.5 text-xs text-center whitespace-nowrap">
                       {exception.includedInEcl ? '✓' : ''}

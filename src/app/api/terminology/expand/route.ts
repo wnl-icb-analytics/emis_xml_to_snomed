@@ -53,6 +53,7 @@ async function expandSingleValueSet(
 ): Promise<ValueSetGroup | RawValueSetExpansion> {
   const vsOriginalParentCodes = mapping.codeIndices.map((idx: number) => parentCodes[idx]);
   const vsOriginalExcludedCodes = mapping.excludedCodes || [];
+  const vsOriginalExcludedDisplayNames: string[] = mapping.excludedDisplayNames || [];
   
   // Debug: log excluded codes
   if (vsOriginalExcludedCodes.length > 0) {
@@ -612,8 +613,11 @@ async function expandSingleValueSet(
     console.log(`[expandSingleValueSet] Generated ECL expression for ValueSet ${mapping.valueSetIndex + 1}:`, eclExpression.substring(0, 200));
   }
 
-  // Build exceptions metadata with translation information and error tracking
-  const exceptionsMetadata = vsOriginalExcludedCodes.map((originalCode: string) => {
+  // Build exceptions metadata with translation information and error tracking.
+  // The raw XML code and displayName are always preserved; translationError records
+  // the reason translation failed without dropping the original code.
+  const exceptionsMetadata = vsOriginalExcludedCodes.map((originalCode: string, idx: number) => {
+    const originalDisplay = vsOriginalExcludedDisplayNames[idx] || '';
     const translatedCode = codeToSnomedMap.get(originalCode);
     const hasTranslation = !!translatedCode;
 
@@ -650,6 +654,7 @@ async function expandSingleValueSet(
 
     return {
       originalExcludedCode: originalCode,
+      originalExcludedDisplay: originalDisplay,
       translatedToSnomedCode: translatedSnomedCode || null,
       includedInEcl,
       translationError: translationError || null,

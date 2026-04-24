@@ -26,6 +26,7 @@ export interface FailedCode {
 
 export interface ExceptionMetadata {
   originalExcludedCode: string;
+  originalExcludedDisplay: string;
   translatedToSnomedCode: string | null;
   includedInEcl: boolean;
   translationError: string | null;
@@ -116,18 +117,25 @@ export function detectFailedCodes(
     });
 }
 
-/** Build exception metadata for excluded codes */
+/** Build exception metadata for excluded codes.
+ *  Always preserves the raw XML code and displayName in the output row,
+ *  regardless of whether ConceptMap translation succeeded — translation_error
+ *  carries the failure reason separately.
+ */
 export function buildExceptionsMetadata(
   excludedCodes: string[],
+  excludedDisplayNames: string[] | undefined,
   translationMap: Record<string, TranslatedCode | null>,
   historicalMap: Record<string, string>,
 ): ExceptionMetadata[] {
-  return excludedCodes.map(originalCode => {
+  return excludedCodes.map((originalCode, idx) => {
+    const originalDisplay = excludedDisplayNames?.[idx] || '';
     const translatedCode = translationMap[originalCode];
 
     if (!translatedCode) {
       return {
         originalExcludedCode: originalCode,
+        originalExcludedDisplay: originalDisplay,
         translatedToSnomedCode: null,
         includedInEcl: false,
         translationError: 'No translation found from ConceptMap',
@@ -139,6 +147,7 @@ export function buildExceptionsMetadata(
 
     return {
       originalExcludedCode: originalCode,
+      originalExcludedDisplay: originalDisplay,
       translatedToSnomedCode: resolved,
       includedInEcl: true,
       translationError: null,
@@ -152,6 +161,7 @@ export function assembleValueSetData(
   parentCodes: string[],
   codeIndices: number[],
   excludedCodes: string[],
+  excludedDisplayNames: string[] | undefined,
   displayNames: string[] | undefined,
   codeSystems: string[] | undefined,
   includeChildren: boolean[],
@@ -169,7 +179,7 @@ export function assembleValueSetData(
     raw.rf2RefsetIds, raw.sctConstNoProducts,
   );
 
-  const exceptions = buildExceptionsMetadata(excludedCodes, translationMap, historicalMap);
+  const exceptions = buildExceptionsMetadata(excludedCodes, excludedDisplayNames, translationMap, historicalMap);
 
   const sqlFormattedCodes = formatForSql(raw.concepts.map(c => c.code));
 

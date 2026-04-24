@@ -14,6 +14,7 @@ export function prepareValueSetForExpansion(
   const isRefset: boolean[] = [];
   const codeSystems: string[] = [];
   const vsExcludedCodes: string[] = [];
+  const vsExcludedDisplayNames: string[] = [];
 
   vs.values.forEach((v) => {
     parentCodes.push(v.code);
@@ -25,6 +26,7 @@ export function prepareValueSetForExpansion(
 
   vs.exceptions.forEach((e) => {
     vsExcludedCodes.push(e.code);
+    vsExcludedDisplayNames.push(e.displayName || '');
   });
 
   const valueSetMapping = [{
@@ -32,6 +34,7 @@ export function prepareValueSetForExpansion(
     valueSetIndex: vsIndex,
     codeIndices: parentCodes.map((_, idx) => idx),
     excludedCodes: vsExcludedCodes,
+    excludedDisplayNames: vsExcludedDisplayNames,
   }];
 
   return {
@@ -41,6 +44,7 @@ export function prepareValueSetForExpansion(
     isRefset,
     codeSystems,
     excludedCodes: vsExcludedCodes,
+    excludedDisplayNames: vsExcludedDisplayNames,
     valueSetMapping,
   };
 }

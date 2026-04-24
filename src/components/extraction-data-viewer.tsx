@@ -201,7 +201,7 @@ export function ExtractionDataViewer({ open, onOpenChange, data }: ExtractionDat
           </TabsContent>
 
           <TabsContent value="exceptions" className="mt-4">
-            {renderTable('exceptions', normalizedTableColumns.exceptions, ['original_excluded_code', 'translated_to_snomed_code'],
+            {renderTable('exceptions', normalizedTableColumns.exceptions, ['original_excluded_code', 'original_excluded_display', 'translated_to_snomed_code'],
             'Codes explicitly excluded from ValueSets via exception rules in the XML, with translation tracking.')}
           </TabsContent>
         </Tabs>

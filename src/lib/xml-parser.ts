@@ -331,80 +331,75 @@ export function parseValueSet(valueSet: any, index: number): EmisValueSet {
   // 2. Exceptions nested within individual values (value.exception.values)
   const allExceptions: any[] = [];
   
+  // Normalise a raw exception value object into {value, displayName} strings.
+  // parseTagValue in fast-xml-parser may return numeric tag text as a number
+  // for long integer codes — coerce to string so codes round-trip unchanged.
+  const normaliseException = (exc: any): { value: string; displayName: string } | null => {
+    if (!exc) return null;
+    let code = '';
+    if (typeof exc.value === 'string' || typeof exc.value === 'number' || typeof exc.value === 'bigint') {
+      code = exc.value.toString().trim();
+    } else if (exc.value && typeof exc.value === 'object' && exc.value['#text'] !== undefined) {
+      code = exc.value['#text'].toString().trim();
+    } else if (typeof exc.code === 'string' || typeof exc.code === 'number') {
+      code = exc.code.toString().trim();
+    }
+    if (!code) return null;
+    let displayName = '';
+    if (typeof exc.displayName === 'string' || typeof exc.displayName === 'number') {
+      displayName = exc.displayName.toString().trim();
+    } else if (exc.displayName && typeof exc.displayName === 'object' && exc.displayName['#text'] !== undefined) {
+      displayName = exc.displayName['#text'].toString().trim();
+    }
+    return { value: code, displayName };
+  };
+
+  const pushRawExceptions = (raw: any) => {
+    if (!raw) return;
+    const arr = Array.isArray(raw) ? raw : [raw];
+    arr.forEach((exc: any) => {
+      const n = normaliseException(exc);
+      if (n) allExceptions.push(n);
+    });
+  };
+
   // Handle ValueSet-level exceptions
   if (valueSet.exception) {
     if (valueSet.exception.values) {
-      const vsExceptions = Array.isArray(valueSet.exception.values) 
-        ? valueSet.exception.values 
-        : [valueSet.exception.values];
-      allExceptions.push(...vsExceptions);
+      pushRawExceptions(valueSet.exception.values);
     } else if (Array.isArray(valueSet.exception)) {
-      allExceptions.push(...valueSet.exception);
-    } else if (valueSet.exception.value) {
-      allExceptions.push(valueSet.exception);
+      pushRawExceptions(valueSet.exception);
     } else {
-      allExceptions.push(valueSet.exception);
+      pushRawExceptions(valueSet.exception);
     }
   } else if (valueSet.exceptions) {
-    const vsExceptions = Array.isArray(valueSet.exceptions) 
-      ? valueSet.exceptions 
-      : [valueSet.exceptions];
-    allExceptions.push(...vsExceptions);
+    pushRawExceptions(valueSet.exceptions);
   }
   
   // Extract exceptions nested within individual values
   // These are exceptions to specific parent codes (e.g., exclude certain children from a parent with includeChildren=true)
-  valuesArray.forEach((value: any, valueIdx: number) => {
+  valuesArray.forEach((value: any) => {
     if (value.exception) {
-      // Exception can contain a values array with codes to exclude
-      // Each exception value has the same structure as a regular value: { value: 'code', displayName: '...', includeChildren: 'true' }
       if (value.exception.values) {
-        const nestedExceptions = Array.isArray(value.exception.values)
-          ? value.exception.values
-          : [value.exception.values];
-        
-        nestedExceptions.forEach((exc: any) => {
-          // Use the same extraction logic as parseValue to handle different XML parser outputs
-          let excCode = '';
-          
-          if (typeof exc.value === 'string' || typeof exc.value === 'number') {
-            excCode = exc.value.toString().trim();
-          } else if (exc.value && typeof exc.value === 'object' && exc.value['#text']) {
-            excCode = exc.value['#text'].toString().trim();
-          } else if (exc.code) {
-            excCode = exc.code.toString().trim();
-          }
-          
-          if (excCode) {
-            allExceptions.push({ value: excCode });
-          }
-        });
-      }
-      // Or exception might be a direct value
-      else if (value.exception.value) {
-        let excCode = '';
-        if (typeof value.exception.value === 'string' || typeof value.exception.value === 'number') {
-          excCode = value.exception.value.toString().trim();
-        } else if (value.exception.value && typeof value.exception.value === 'object' && value.exception.value['#text']) {
-          excCode = value.exception.value['#text'].toString().trim();
-        }
-        
-        if (excCode) {
-          allExceptions.push({ value: excCode });
-        }
+        pushRawExceptions(value.exception.values);
+      } else if (value.exception.value !== undefined) {
+        pushRawExceptions(value.exception);
       }
     }
   });
   
-  // Deduplicate exceptions by code
-  const uniqueExceptions = new Map<string, any>();
-  allExceptions.forEach((exc: any) => {
-    const code = exc.value || exc.code || '';
-    if (code && !uniqueExceptions.has(code)) {
-      uniqueExceptions.set(code, exc);
+  // Deduplicate exceptions by code; keep the first non-empty displayName seen for each code
+  const uniqueExceptions = new Map<string, { value: string; displayName: string }>();
+  allExceptions.forEach((exc: { value: string; displayName: string }) => {
+    if (!exc.value) return;
+    const existing = uniqueExceptions.get(exc.value);
+    if (!existing) {
+      uniqueExceptions.set(exc.value, exc);
+    } else if (!existing.displayName && exc.displayName) {
+      uniqueExceptions.set(exc.value, exc);
     }
   });
-  
+
   const exceptionsArray = Array.from(uniqueExceptions.values());
 
   const codeSystem = valueSet.codeSystem || undefined;
@@ -421,10 +416,11 @@ export function parseValueSet(valueSet: any, index: number): EmisValueSet {
     description,
     values: valuesArray.map((v: any) => parseValue(v)).filter((v): v is EmisValue => v !== null),
     exceptions: exceptionsArray
-      .map((e: any) => ({
-        code: e.value || '',
+      .map((e) => ({
+        code: e.value,
+        displayName: e.displayName,
       }))
-      .filter((e: any) => e.code),
+      .filter((e) => e.code),
   };
 }
 

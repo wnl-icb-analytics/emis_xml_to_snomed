@@ -24,7 +24,10 @@ export function buildMinimalParsedXmlData(parsedData: EmisXmlDocument, fileName:
           isRefset: value.isRefset,
           displayName: value.displayName && value.displayName !== value.code ? value.displayName : undefined,
         })),
-        exceptions: vs.exceptions.map((exception) => exception.code),
+        exceptions: vs.exceptions.map((exception) => ({
+          code: exception.code,
+          displayName: exception.displayName || undefined,
+        })),
       })),
       reportType: report.reportType,
       criteriaGroups: report.criteriaGroups,

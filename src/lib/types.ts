@@ -38,6 +38,7 @@ export interface EmisValue {
 
 export interface EmisException {
   code: string;
+  displayName?: string;
 }
 
 // === Rule Structure Types ===
@@ -257,6 +258,7 @@ export interface ValueSetGroup {
   // Exception (excluded codes) metadata with translation tracking
   exceptions?: Array<{
     originalExcludedCode: string;
+    originalExcludedDisplay: string;
     translatedToSnomedCode: string | null;
     includedInEcl: boolean;
     translationError: string | null;
@@ -312,6 +314,7 @@ export interface ExpandCodesRequest {
   parentCodes: string[];
   displayNames?: string[];
   excludedCodes: string[];
+  excludedDisplayNames?: string[];
   includeChildren: boolean[];
   isRefset?: boolean[];
   codeSystems?: string[];
@@ -361,6 +364,7 @@ export interface ValueSetMapping {
   valueSetIndex: number;
   codeIndices: number[]; // Indices in parentCodes array that belong to this ValueSet
   excludedCodes: string[];
+  excludedDisplayNames?: string[];
 }
 
 export interface ExpandCodesResponse {

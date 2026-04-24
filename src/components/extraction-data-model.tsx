@@ -46,7 +46,7 @@ export function ExtractionDataModel({ className }: { className?: string }) {
       name: 'exceptions',
       primaryKey: 'exception_id',
       foreignKeys: [{ column: 'valueset_id', references: 'valuesets.valueset_id' }],
-      columns: ['exception_id', 'valueset_id', 'original_excluded_code', 'translated_to_snomed_code', 'included_in_ecl', 'translation_error'],
+      columns: ['exception_id', 'valueset_id', 'original_excluded_code', 'original_excluded_display', 'translated_to_snomed_code', 'included_in_ecl', 'translation_error'],
     },
   ];
 
