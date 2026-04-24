@@ -33,6 +33,7 @@ export async function GET() {
     '- Parsed agent documents are stored in private Blob storage.',
     '- `documentId` values are durable across separate Vercel function invocations.',
     '- Prefer loading shared XML from Blob first when the file already exists.',
+    '- `implementationGuideMarkdown` is a readable guide, not the canonical source for thresholds and operators; use `report.agentInterpretation.decisionFlow[].criteriaDetails` for exact logic.',
     '',
     '## Important Response Fields',
     '',

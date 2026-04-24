@@ -1001,6 +1001,8 @@ function buildImplementationGuideMarkdown(report: EmisReport, allReports: EmisRe
 
   lines.push(`# Implementation Guide: ${report.searchName}`);
   lines.push('');
+  lines.push('Important: This markdown is a readable guide. For exact operators, ranges, thresholds, restrictions, and linked-criterion logic, inspect `report.agentInterpretation.decisionFlow[].criteriaDetails` in the JSON response.');
+  lines.push('');
   lines.push(`Target report: ${report.name}`);
   lines.push(`Parent population: ${getParentPopulation(report, allReports)}`);
   lines.push('');
