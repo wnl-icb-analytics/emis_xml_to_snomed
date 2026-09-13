@@ -66,7 +66,7 @@ export function detectRF2Version(): RF2VersionInfo | null {
     const releaseDate = `${parseInt(day, 10)} ${monthName} ${year}`;
 
     // Try to detect module and refsets from folder structure
-    let module = 'Unknown';
+    let moduleId = 'Unknown';
     let refsets: string[] = [];
     try {
       const refsetPath = path.join(projectRoot, rf2Folder, 'Snapshot', 'Refset', 'Content');
@@ -77,10 +77,10 @@ export function detectRF2Version(): RF2VersionInfo | null {
         if (refsetFiles.length > 0) {
           const moduleMatch = refsetFiles[0].match(/_(\d{7,})_/);
           if (moduleMatch) {
-            module = `${moduleMatch[1]}`;
+            moduleId = `${moduleMatch[1]}`;
             // Add known module names
             if (moduleMatch[1] === '1000230') {
-              module = 'UK Primary Care (1000230)';
+              moduleId = 'UK Primary Care (1000230)';
             }
           }
         }
@@ -110,7 +110,7 @@ export function detectRF2Version(): RF2VersionInfo | null {
       releaseDate,
       releaseId,
       folderName: rf2Folder,
-      module,
+      module: moduleId,
       edition: formattedEdition,
       refsets: refsets.length > 0 ? refsets : undefined,
     };

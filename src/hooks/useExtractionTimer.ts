@@ -26,10 +26,11 @@ export function useExtractionTimer(): [ExtractionTimerState, ExtractionTimerActi
   const valuesetTimesRef = useRef<number[]>([]);
   const completedCountRef = useRef(0);
   const totalCountRef = useRef(0);
+  const [isRunning, setIsRunning] = useState(false);
 
   // Timer interval effect
   useEffect(() => {
-    if (!startTimeRef.current) return;
+    if (!isRunning) return;
 
     const interval = setInterval(() => {
       if (!startTimeRef.current) return;
@@ -53,7 +54,7 @@ export function useExtractionTimer(): [ExtractionTimerState, ExtractionTimerActi
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [startTimeRef.current]); // Only re-run if start time changes
+  }, [isRunning]);
 
   const start = () => {
     const now = Date.now();
@@ -64,6 +65,7 @@ export function useExtractionTimer(): [ExtractionTimerState, ExtractionTimerActi
     valuesetTimesRef.current = [];
     completedCountRef.current = 0;
     totalCountRef.current = 0;
+    setIsRunning(true);
   };
 
   const stop = () => {
@@ -72,6 +74,7 @@ export function useExtractionTimer(): [ExtractionTimerState, ExtractionTimerActi
       setTotalTime(finalTime);
     }
     startTimeRef.current = null;
+    setIsRunning(false);
     setElapsedTime(0);
     setRemainingTime(null);
     valuesetTimesRef.current = [];
