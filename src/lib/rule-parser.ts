@@ -213,7 +213,7 @@ function parseValueSetsFromFilterAttrs(filterAttrs: any[]): EmisValueSet[] {
           if (!tc?.valueSet) continue;
           const vsNodes = toArray(tc.valueSet);
           for (const vs of vsNodes) {
-            addValueSet(vs, valueSets, seen);
+            addValueSet(vs, valueSets, seen, true);
           }
         }
       }
@@ -223,8 +223,9 @@ function parseValueSetsFromFilterAttrs(filterAttrs: any[]): EmisValueSet[] {
   return valueSets;
 }
 
-function addValueSet(vsNode: any, out: EmisValueSet[], seen: Set<string>) {
+function addValueSet(vsNode: any, out: EmisValueSet[], seen: Set<string>, isRestrictionTest = false) {
   const parsed = parseValueSet(vsNode, out.length);
+  if (parsed && isRestrictionTest) parsed.isRestrictionTest = true;
   // Exclusion-style sets (<allValues>) stay on the column filter only —
   // hoisting them here would list excluded values as if they were code lists
   if (parsed && parsed.values.length > 0 && !parsed.isAllValuesExcept) {
@@ -455,12 +456,24 @@ function parseTestConditions(testAttrNode: any): RestrictionCondition[] {
     const column = extractText(cv?.column) || '';
     const operator = extractText(cv?.inNotIn) || 'IN';
 
-    // ValueSet descriptions
+    // ValueSet labels: the cluster description, else the value names. A set
+    // without either would drop the test from the restriction text.
     const valueSets: string[] = [];
     const vsNodes = toArray(cv?.valueSet);
     for (const vs of vsNodes) {
       const desc = extractText(vs?.description);
-      if (desc) valueSets.push(desc);
+      if (desc) {
+        valueSets.push(desc);
+        continue;
+      }
+      const parsed = parseValueSet(vs, 0);
+      const names = parsed.values
+        .map((v) => v.displayName || (v.isRefset ? `Refset: ${v.code}` : v.code))
+        .filter(Boolean);
+      if (names.length > 0) {
+        const more = names.length > 3 ? ` +${names.length - 3} more` : '';
+        valueSets.push(`${parsed.isAllValuesExcept ? 'any except ' : ''}${names.slice(0, 3).join(', ')}${more}`);
+      }
     }
 
     // Range values
