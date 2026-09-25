@@ -34,6 +34,8 @@ export interface ValueSetSummary {
 export interface CriterionDisplayData {
   dedupedValueSets: EmisValueSet[];
   extraValueSets: EmisValueSet[];
+  /** Sets that only test the record a restriction keeps, not code lists */
+  testValueSets: EmisValueSet[];
   filters: { label: string; value: string }[];
   restrictions: { label: string; value: string }[];
 }
@@ -102,6 +104,8 @@ export interface CriterionLogicSummary {
   extraValueSets: ValueSetSummary[];
   filters: CriterionFilterSummary[];
   restrictions: CriterionRestrictionSummary[];
+  /** Code lists the restriction tests the kept record against */
+  restrictionValueSets: ValueSetSummary[];
   linkedCriteria: CriterionLogicSummary[];
   /** Nested criterion groups (<baseCriteriaGroup>) with their own operator */
   nestedGroups: Array<{ operator: string; criteria: CriterionLogicSummary[] }>;
@@ -275,10 +279,22 @@ export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDi
   const seenCodeHashes = new Set<string>();
   const dedupedValueSets: EmisValueSet[] = [];
   for (const vs of criterion.valueSets) {
+    if (vs.isRestrictionTest) continue;
     const codeKey = vs.values.map((v) => v.code).sort().join(',');
     if (!seenCodeHashes.has(codeKey)) {
       seenCodeHashes.add(codeKey);
       dedupedValueSets.push(vs);
+    }
+  }
+
+  const seenTestHashes = new Set<string>();
+  const testValueSets: EmisValueSet[] = [];
+  for (const vs of criterion.valueSets) {
+    if (!vs.isRestrictionTest) continue;
+    const codeKey = vs.values.map((v) => v.code).sort().join(',');
+    if (!seenTestHashes.has(codeKey)) {
+      seenTestHashes.add(codeKey);
+      testValueSets.push(vs);
     }
   }
 
@@ -333,7 +349,7 @@ export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDi
     }
   }
 
-  return { dedupedValueSets, extraValueSets, filters, restrictions };
+  return { dedupedValueSets, extraValueSets, testValueSets, filters, restrictions };
 }
 
 function collectCriteria(criteria: SearchCriterion[], accumulator: SearchCriterion[]) {
@@ -567,6 +583,9 @@ function buildCriterionLogicSummary(
     extraValueSets: displayData.extraValueSets.map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
     filters: criterion.columnFilters.map((filter) => buildFilterSummary(filter, friendlyNameMap)),
     restrictions: criterion.restrictions.map(buildRestrictionSummary),
+    restrictionValueSets: displayData.testValueSets
+      .filter((vs) => !nestedVsIds.has(vs.id))
+      .map((vs) => buildValueSetSummary(vs, friendlyNameMap)),
     linkedCriteria: criterion.linkedCriteria.map((linked) => buildCriterionLogicSummary(linked, friendlyNameMap)),
     nestedGroups,
   };
@@ -700,6 +719,12 @@ export function buildRulesMarkdown(report: EmisReport, allReports: EmisReport[])
           lines.push(`${indent}      - Condition: ${conditionParts.join(' | ')}`);
         }
       }
+      if (criterionSummary.restrictionValueSets.length > 0) {
+        lines.push(`${indent}    - Restriction test ValueSets (test the kept record, not code lists):`);
+        for (const vs of criterionSummary.restrictionValueSets) {
+          lines.push(`${indent}      - \`${vs.friendlyName}\`: ${vs.preview} (${vs.codeCount} code${vs.codeCount === 1 ? '' : 's'})`);
+        }
+      }
     }
     if (criterion.linkedCriteria.length > 0) {
       lines.push(`${indent}  - Linked criteria:`);
@@ -770,8 +795,8 @@ function buildCriteriaSearchText(criteria: SearchCriterion[]): string {
   const visit = (criterion: SearchCriterion) => {
     parts.push(criterion.displayName || '');
     parts.push(criterion.table);
-    for (const { dedupedValueSets, extraValueSets, filters, restrictions } of [getCriterionDisplayData(criterion)]) {
-      for (const vs of [...dedupedValueSets, ...extraValueSets]) {
+    for (const { dedupedValueSets, extraValueSets, testValueSets, filters, restrictions } of [getCriterionDisplayData(criterion)]) {
+      for (const vs of [...dedupedValueSets, ...extraValueSets, ...testValueSets]) {
         parts.push(formatValueSetPreview(vs));
         parts.push(vs.description || '');
         parts.push(vs.values.map((value) => value.displayName).join(' '));
@@ -1342,6 +1367,12 @@ function renderCriterionBlock(
     const symbolic = symbolicRestriction(restriction);
     const addSymbolic = symbolic && !words.includes(symbolic);
     lines.push(`${indent}  - ${words}${addSymbolic ? ` — \`${symbolic}\`` : ''}`);
+  }
+  // Test sets check the kept record's code; they are not the criterion's code list
+  const testValueSets = criterion.restrictionValueSets.filter((vs) => !isEnumValueSet(vs));
+  testValueSets.forEach((vs) => recordValueSetUse(ctx, vs));
+  if (testValueSets.length > 0) {
+    lines.push(`${indent}  - Kept record's code tested against: ${testValueSets.map(describeValueSetRef).join(', or ')}`);
   }
 
   let childIndex = 0;

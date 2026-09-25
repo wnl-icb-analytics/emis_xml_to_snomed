@@ -32,6 +32,13 @@ export interface EmisValueSet {
    * EXCEPT those listed in `values` (e.g. episode excluding Review/Ended).
    */
   isAllValuesExcept?: boolean;
+  /**
+   * True when the set only tests the record a restriction keeps
+   * (restriction > testAttribute), e.g. "latest record's code is Moderate or
+   * Severe frailty". It does not select records, so it is not a code list for
+   * the criterion.
+   */
+  isRestrictionTest?: boolean;
 }
 
 export interface EmisValue {

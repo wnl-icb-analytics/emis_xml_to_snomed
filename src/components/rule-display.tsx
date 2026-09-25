@@ -615,7 +615,7 @@ function CriterionCard({
 }) {
   const [isOpen, setIsOpen] = useState(true);
   const isLinked = depth > 0;
-  const { dedupedValueSets, extraValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
+  const { dedupedValueSets, extraValueSets, testValueSets, filters, restrictions } = getCriterionDisplayData(criterion);
 
   return (
     <div className={`rounded-md border ${isLinked ? 'border-l-2 border-l-blue-500 ml-4 bg-blue-500/5' : 'border-border bg-muted/30'}`}>
@@ -703,6 +703,23 @@ function CriterionCard({
                       {c.label ? `${c.label} ${c.value}` : c.value}
                     </Badge>
                   </span>
+                ))}
+              </div>
+            )}
+
+            {/* Restriction test sets: check the kept record's code, not code lists */}
+            {testValueSets.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+                  Kept record&apos;s code must be in
+                </p>
+                {testValueSets.map((vs, vsIdx) => (
+                  <ValueSetRow
+                    key={vs.id || `test-${vsIdx}`}
+                    vs={vs}
+                    friendlyName={friendlyNameMap.get(vs.id)}
+                    expanded={findExpanded?.(vs)}
+                  />
                 ))}
               </div>
             )}
