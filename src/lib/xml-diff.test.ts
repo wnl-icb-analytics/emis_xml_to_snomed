@@ -11,6 +11,7 @@ interface Spec {
   codes?: string[];
   parent?: string;
   groupId?: string;
+  popRefs?: string[];
 }
 
 function report(s: Spec, root: string): EmisReport {
@@ -38,7 +39,7 @@ function report(s: Spec, root: string): EmisReport {
         criteria: [
           { id: `crit-${s.name}`, table: 'EVENTS', displayName: 'Clinical Codes', negation: false, valueSets: [vs], columnFilters: [], restrictions: [], linkedCriteria: [] },
         ],
-        populationCriteria: [],
+        populationCriteria: (s.popRefs ?? []).map((g, i) => ({ id: `pop-${i}`, reportGuid: g })),
         actionIfTrue: 'SELECT',
         actionIfFalse: 'REJECT',
       },
@@ -61,7 +62,7 @@ test('rotated GUIDs and root folder rename are not reported as changes', () => {
     [{ guid: 'b1', folder: 'Registers', name: 'Asthma Register' }]
   );
   assert.equal(r.summary.unchanged, 1);
-  assert.equal(r.entries.length, 0);
+  assert.deepEqual(r.entries.map((e) => e.status), ['unchanged']);
   assert.equal(r.base.label, 'SET R5');
   assert.equal(r.target.label, 'SET R6');
 });
@@ -116,7 +117,7 @@ test('duplicate folder + name searches pair by parent, not position', () => {
     ]
   );
   assert.equal(r.summary.unchanged, 4);
-  assert.equal(r.entries.length, 0);
+  assert.ok(r.entries.every((e) => e.fieldChanges.length === 0));
 });
 
 test('parent change is detected through the match map', () => {
@@ -168,7 +169,7 @@ test('scope marks direct searches with tags and their parents as ancestors', () 
   assert.deepEqual(child.scopeTags, ['int_model_a']);
   assert.equal(parent.scope, 'ancestor');
   assert.equal(parent.status, 'unchanged'); // unchanged in-scope entries are kept
-  assert.ok(!r.entries.some((e) => e.target?.name === 'Unrelated'));
+  assert.equal(r.entries.find((e) => e.target?.name === 'Unrelated')?.scope, undefined);
   assert.deepEqual(r.scope, { label: 'dbt', searches: 1, matched: 1, ancestors: 1 });
 
   const md = renderXmlDiffMarkdown(r, { scopeOnly: true });
@@ -180,4 +181,63 @@ test('scope marks direct searches with tags and their parents as ancestors', () 
 test('parseDiffScope accepts a plain array and rejects other shapes', () => {
   assert.equal(parseDiffScope([{ folder: 'F', name: 'A' }]).searches.length, 1);
   assert.throws(() => parseDiffScope({ rows: [] }));
+});
+
+test('duplicates prefer content evidence over parent alone', () => {
+  // c1 keeps its content but moves parent; c2 keeps its parent but changes codes. Target order reversed.
+  const r = run(
+    [
+      { guid: 'p1', folder: 'F', name: 'Parent 1' },
+      { guid: 'p2', folder: 'F', name: 'Parent 2' },
+      { guid: 'c1', folder: 'F', name: 'Dup', parent: 'p1', codes: ['1'] },
+      { guid: 'c2', folder: 'F', name: 'Dup', parent: 'p1', codes: ['2'] },
+    ],
+    [
+      { guid: 'q2', folder: 'F', name: 'Parent 2' },
+      { guid: 'q1', folder: 'F', name: 'Parent 1' },
+      { guid: 'd2', folder: 'F', name: 'Dup', parent: 'q1', codes: ['9'] },
+      { guid: 'd1', folder: 'F', name: 'Dup', parent: 'q2', codes: ['1'] },
+    ]
+  );
+  const dups = r.entries.filter((e) => e.target?.name === 'Dup');
+  const parentOnly = dups.find((e) => e.fieldChanges.some((f) => f.field === 'parent'))!;
+  assert.equal(parentOnly.codesAdded.length + parentOnly.codesRemoved.length, 0);
+  const codesOnly = dups.find((e) => e.codesAdded.length > 0)!;
+  assert.deepEqual(codesOnly.codesAdded.map((c) => c.code), ['9']);
+  assert.ok(!codesOnly.fieldChanges.some((f) => f.field === 'parent'));
+});
+
+test('similar names without shared criteria or codes are not paired', () => {
+  const r = run(
+    [{ guid: 'a', folder: 'F', name: 'Patients with asthma', codes: ['1'], groupId: 'g1' }],
+    [{ guid: 'b', folder: 'F', name: 'Patients with diabetes', codes: ['2'], groupId: 'g2' }]
+  );
+  assert.equal(r.summary.added, 1);
+  assert.equal(r.summary.removed, 1);
+});
+
+test('references outside both exports are flagged, not silently treated as changes', () => {
+  const r = run(
+    [{ guid: 'a', folder: 'F', name: 'Child', parent: 'missing-1', popRefs: ['missing-3'] }],
+    [{ guid: 'b', folder: 'F', name: 'Child', parent: 'missing-2', popRefs: ['missing-4'] }]
+  );
+  const [e] = r.entries;
+  assert.equal(e.status, 'unchanged');
+  assert.equal(e.warnings.length, 2);
+});
+
+test('a parent resolved on one side only is a change', () => {
+  const r = run(
+    [
+      { guid: 'p', folder: 'F', name: 'Parent' },
+      { guid: 'a', folder: 'F', name: 'Child', parent: 'p' },
+    ],
+    [
+      { guid: 'q', folder: 'F', name: 'Parent' },
+      { guid: 'b', folder: 'F', name: 'Child', parent: 'missing' },
+    ]
+  );
+  const child = r.entries.find((e) => e.target?.name === 'Child')!;
+  assert.equal(child.status, 'modified');
+  assert.equal(child.fieldChanges[0].to, 'unknown search missing');
 });

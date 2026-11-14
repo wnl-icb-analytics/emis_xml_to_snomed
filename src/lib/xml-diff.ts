@@ -7,7 +7,7 @@
  * the match map, never by raw value.
  */
 import { structuredPatch } from 'diff';
-import type { EmisReport, EmisXmlDocument } from './types';
+import type { EmisReport, EmisXmlDocument, SearchCriterion } from './types';
 import { buildImplementationGuideMarkdown } from './agent-report-utils';
 
 export const XML_DIFF_SCHEMA_VERSION = '1';
@@ -61,6 +61,8 @@ export interface SearchDiffEntry {
   guidePatch?: string;
   /** Full guide for added/removed searches */
   guide?: string;
+  /** References that could not be checked, e.g. a parent search outside both exports */
+  warnings: string[];
   /** Searches in the newer side (older side for removed) that use this one as their parent */
   dependents: number;
   scope?: ScopeRelation;
@@ -104,7 +106,7 @@ export interface XmlDiffResult {
   folders: FolderSummary[];
   folderMoves: FolderMove[];
   scope?: { label: string; searches: number; matched: number; ancestors: number };
-  /** All non-unchanged entries, plus unchanged in-scope entries */
+  /** Every search; unchanged entries carry identity only */
   entries: SearchDiffEntry[];
 }
 
@@ -146,13 +148,27 @@ const fingerprint = (r: EmisReport) => JSON.stringify(canonical(r));
 /** Criteria-group IDs survive re-export; copied searches share them, so only a tiebreaker */
 const stableSig = (r: EmisReport) => (r.criteriaGroups ?? []).map((g) => g.id).sort().join(',');
 
+/** Criterion IDs (incl. nested/linked) and codes; evidence that two differently named searches are related */
+function evidenceOf(r: EmisReport): Set<string> {
+  const out = new Set<string>();
+  const walk = (c: SearchCriterion) => {
+    out.add(`c|${c.id}`);
+    c.linkedCriteria.forEach(walk);
+    c.baseCriteriaGroups?.forEach((g) => g.criteria.forEach(walk));
+  };
+  (r.criteriaGroups ?? []).forEach((g) => g.criteria.forEach(walk));
+  (r.columnGroups ?? []).forEach((g) => g.criteria.forEach(walk));
+  r.valueSets.forEach((vs) => vs.values.forEach((v) => out.add(`v|${v.code}`)));
+  return out;
+}
+
 function collectCodes(r: EmisReport): Map<string, CodeRef> {
   const out = new Map<string, CodeRef>();
   for (const vs of r.valueSets) {
     const cluster = vs.description || null;
     const codeSystem = vs.codeSystem || 'UNKNOWN';
     for (const v of vs.values) {
-      const key = `i|${codeSystem}|${v.code}`;
+      const key = `i|${cluster ?? ''}|${codeSystem}|${v.code}`;
       if (!out.has(key)) {
         out.set(key, {
           code: v.code,
@@ -166,7 +182,7 @@ function collectCodes(r: EmisReport): Map<string, CodeRef> {
       }
     }
     for (const e of vs.exceptions) {
-      const key = `x|${codeSystem}|${e.code}`;
+      const key = `x|${cluster ?? ''}|${codeSystem}|${e.code}`;
       if (!out.has(key)) {
         out.set(key, {
           code: e.code,
@@ -233,7 +249,8 @@ function matchReports(base: Side, target: Side) {
     reverse.set(b, a);
   };
 
-  // 1. Path + name; duplicates paired by parent + fingerprint, parent, fingerprint, stable IDs, then order
+  // 1. Path + name. Duplicates pair by parent + fingerprint, fingerprint, stable IDs, then parent;
+  //    a position fallback applies only when exactly one search is left on each side
   const parentKey = (r: EmisReport, side: Side) => {
     const p = r.parentReportId ? side.byGuid.get(r.parentReportId) : undefined;
     return p ? keyOf(p) : (r.parentType ?? '');
@@ -253,9 +270,9 @@ function matchReports(base: Side, target: Side) {
     // Each pick returns [baseValue, targetValue]; parent keys differ per side
     const picks: Array<(b: EmisReport, t: EmisReport) => [string, string]> = [
       (b, t) => [`${bParent(b)}\u0000${getFp(b)}`, `${tParent(t)}\u0000${getFp(t)}`],
-      (b, t) => [bParent(b), tParent(t)],
       (b, t) => [getFp(b), getFp(t)],
       (b, t) => [stableSig(b), stableSig(t)],
+      (b, t) => [bParent(b), tParent(t)],
     ];
     for (const pick of picks) {
       for (const b of [...remaining]) {
@@ -270,7 +287,8 @@ function matchReports(base: Side, target: Side) {
         }
       }
     }
-    remaining.forEach((b, i) => ts[i] && link(b, ts[i], 'path'));
+    // Ambiguous leftovers fall through to the global passes below
+    if (remaining.length === 1 && ts.length === 1) link(remaining[0], ts[0], 'path');
   }
 
   // 2-4. Unmatched: content, stable IDs, then name — each requires uniqueness on both sides
@@ -298,7 +316,8 @@ function matchReports(base: Side, target: Side) {
   }
 
   // 5. Versioned replacements: same folder (years normalised), same type, and either
-  //    name token Jaccard >= threshold or the same bracketed search ID ignoring version tokens
+  //    either the same bracketed search ID ignoring version tokens, or name token Jaccard >= threshold
+  //    plus shared criterion IDs or codes. Equal-score alternatives are left unmatched.
   const tokenList = (s: string) =>
     s
       .toLowerCase()
@@ -325,12 +344,22 @@ function matchReports(base: Side, target: Side) {
     const tagB = tagOf(b.name);
     for (const t of ut) {
       if (t.reportType !== b.reportType || normFolder(t) !== normFolder(b)) continue;
-      const score = Math.max(jaccard(tb, tokens(t.name)), tagB && tagB === tagOf(t.name) ? 0.9 : 0);
-      if (score >= SIMILAR_NAME_THRESHOLD) candidates.push({ b, t, score });
+      if (tagB && tagB === tagOf(t.name)) {
+        candidates.push({ b, t, score: 1 });
+        continue;
+      }
+      const score = jaccard(tb, tokens(t.name));
+      if (score < SIMILAR_NAME_THRESHOLD) continue;
+      const eb = evidenceOf(b);
+      if ([...evidenceOf(t)].some((x) => eb.has(x))) candidates.push({ b, t, score });
     }
   }
-  for (const c of candidates.sort((x, y) => y.score - x.score)) {
-    if (!pairs.has(c.b) && !reverse.has(c.t)) link(c.b, c.t, 'similar-name');
+  const open = (c: (typeof candidates)[number]) => !pairs.has(c.b) && !reverse.has(c.t);
+  candidates.sort((x, y) => y.score - x.score || keyOf(x.b).localeCompare(keyOf(y.b)) || keyOf(x.t).localeCompare(keyOf(y.t)));
+  for (const c of candidates) {
+    if (!open(c)) continue;
+    const tied = candidates.some((o) => o !== c && o.score === c.score && (o.b === c.b || o.t === c.t) && open(o));
+    if (!tied) link(c.b, c.t, 'similar-name');
   }
 
   return { pairs, reverse, getFp };
@@ -354,8 +383,7 @@ export function diffXmlDocuments(
     }
     return r.parentType ?? null;
   };
-  const popRefs = (r: EmisReport, side: Side) =>
-    (r.criteriaGroups ?? []).flatMap((g) => g.populationCriteria.map((p) => side.byGuid.get(p.reportGuid)));
+  const popGuids = (r: EmisReport) => (r.criteriaGroups ?? []).flatMap((g) => g.populationCriteria.map((p) => p.reportGuid));
 
   const entries: SearchDiffEntry[] = [];
   const empty = () => ({
@@ -368,6 +396,7 @@ export function diffXmlDocuments(
     codesChildrenChanged: [] as SearchDiffEntry['codesChildrenChanged'],
     libraryItemsAdded: [] as string[],
     libraryItemsRemoved: [] as string[],
+    warnings: [] as string[],
   });
   const entryReports = new Map<SearchDiffEntry, { b?: EmisReport; t?: EmisReport }>();
 
@@ -397,18 +426,29 @@ export function diffXmlDocuments(
     }
     if (b.reportType !== t.reportType) e.fieldChanges.push({ field: 'reportType', from: b.reportType, to: t.reportType });
 
-    // Parent: same if the base parent matched the target parent
-    const bp = b.parentReportId ? base.byGuid.get(b.parentReportId) : undefined;
-    const tp = t.parentReportId ? target.byGuid.get(t.parentReportId) : undefined;
-    const parentSame = b.parentType === t.parentType && (bp ? pairs.get(bp)?.other === tp : !tp);
+    // Parent and population references: same when the base reference matched the target one.
+    // GUIDs rotate between exports, so references outside both files cannot be compared.
+    const sameRef = (bGuid: string | undefined, tGuid: string | undefined, what: string) => {
+      if (!bGuid || !tGuid) return !bGuid && !tGuid;
+      const bp = base.byGuid.get(bGuid);
+      const tp = target.byGuid.get(tGuid);
+      if (!bp && !tp) {
+        e.warnings.push(`${what} is outside both exports; cannot confirm it is unchanged`);
+        return true;
+      }
+      return !!bp && !!tp && pairs.get(bp)?.other === tp;
+    };
+    const popParent = (r: EmisReport) => (r.parentType === 'POP' ? r.parentReportId : undefined);
+    const parentSame = b.parentType === t.parentType && sameRef(popParent(b), popParent(t), 'Parent search');
     if (!parentSame) e.fieldChanges.push({ field: 'parent', from: parentLabel(b, base), to: parentLabel(t, target) });
 
-    const bRefs = popRefs(b, base).map((r) => (r ? pairs.get(r)?.other : undefined));
-    const tRefs = popRefs(t, target);
-    const popSame = bRefs.length === tRefs.length && bRefs.every((r, i) => r !== undefined && r === tRefs[i]);
+    const bGuids = popGuids(b);
+    const tGuids = popGuids(t);
+    const popSame = bGuids.length === tGuids.length && bGuids.every((g, i) => sameRef(g, tGuids[i], 'A referenced population search'));
     if (!popSame) {
-      const fmt = (rs: Array<EmisReport | undefined>) => rs.map((r) => (r ? keyOf(r) : '?')).join('; ') || null;
-      e.fieldChanges.push({ field: 'populationCriteria', from: fmt(popRefs(b, base)), to: fmt(tRefs) });
+      const fmt = (gs: string[], side: Side) =>
+        gs.map((g) => (side.byGuid.get(g) ? keyOf(side.byGuid.get(g)!) : `unknown search ${g}`)).join('; ') || null;
+      e.fieldChanges.push({ field: 'populationCriteria', from: fmt(bGuids, base), to: fmt(tGuids, target) });
     }
 
     const bc = collectCodes(b);
@@ -472,9 +512,7 @@ export function diffXmlDocuments(
 
   const order: Record<SearchDiffStatus, number> = { modified: 0, added: 1, removed: 2, moved: 3, renamed: 4, unchanged: 5 };
   const sortKey = (e: SearchDiffEntry) => `${(e.target ?? e.base)!.folder} :: ${(e.target ?? e.base)!.name}`;
-  const kept = entries
-    .filter((e) => e.status !== 'unchanged' || e.scope)
-    .sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || order[a.status] - order[b.status]);
+  const kept = entries.sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || order[a.status] - order[b.status]);
 
   return {
     schemaVersion: XML_DIFF_SCHEMA_VERSION,
@@ -689,6 +727,7 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
       if (e.dependents) out.push(`Dependent searches: ${e.dependents}`);
       out.push('');
       for (const f of e.fieldChanges) out.push(`- **${f.field}**: \`${f.from ?? '—'}\` → \`${f.to ?? '—'}\``);
+      for (const w of e.warnings) out.push(`- **Warning**: ${w}`);
       for (const g of groupCodeChanges(e)) {
         out.push(`- **Codes — ${g.cluster}**: +${g.added.length} / −${g.removed.length}`);
         const show = (sign: string, list: CodeRef[]) => {
@@ -716,7 +755,13 @@ export function parseDiffScope(json: unknown, label = 'Scope'): DiffScopeInput {
   return {
     label,
     searches: list
-      .filter((s): s is { folder: string; name: string; models?: string[]; tags?: string[] } => !!s && typeof s === 'object' && 'name' in s && 'folder' in s)
-      .map((s) => ({ folder: s.folder, name: s.name, tags: s.tags ?? s.models })),
+      .filter(
+        (s): s is { folder: string; name: string; models?: unknown; tags?: unknown } =>
+          !!s && typeof s === 'object' && typeof (s as { name?: unknown }).name === 'string' && typeof (s as { folder?: unknown }).folder === 'string'
+      )
+      .map((s) => {
+        const tags = Array.isArray(s.tags) ? s.tags : Array.isArray(s.models) ? s.models : [];
+        return { folder: s.folder, name: s.name, tags: tags.filter((t): t is string => typeof t === 'string') };
+      }),
   };
 }

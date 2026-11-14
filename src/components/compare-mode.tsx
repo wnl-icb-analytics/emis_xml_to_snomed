@@ -163,9 +163,9 @@ export default function CompareMode() {
       <Card>
         <CardContent className="pt-4 space-y-3">
           <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
-            <FilePicker label="Base (older)" value={basePath} onChange={setBasePath} files={files} />
+            <FilePicker id="compare-base" label="Base (older)" value={basePath} onChange={setBasePath} files={files} />
             <ArrowRight className="h-4 w-4 mb-2.5 text-muted-foreground" />
-            <FilePicker label="Target (newer)" value={targetPath} onChange={setTargetPath} files={files} />
+            <FilePicker id="compare-target" label="Target (newer)" value={targetPath} onChange={setTargetPath} files={files} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -249,6 +249,7 @@ export default function CompareMode() {
                 key={s}
                 type="button"
                 onClick={() => toggleStatus(s)}
+                aria-pressed={statuses.has(s)}
                 className={`rounded-md border px-3 py-2 text-left transition-opacity ${STATUS[s].tile} ${statuses.has(s) ? '' : 'opacity-40'}`}
               >
                 <div className={`text-2xl font-semibold tabular-nums ${STATUS[s].text}`}>{counts[s]}</div>
@@ -270,7 +271,7 @@ export default function CompareMode() {
           <div className="flex items-center gap-4">
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name, folder or model" className="h-9 pl-8 text-sm" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name, folder or model" aria-label="Filter searches" className="h-9 pl-8 text-sm" />
             </div>
             {result.scope && (
               <div className="flex items-center gap-2">
@@ -303,12 +304,12 @@ export default function CompareMode() {
   );
 }
 
-function FilePicker({ label, value, onChange, files }: { label: string; value: string; onChange: (v: string) => void; files: XmlBlobFileSummary[] }) {
+function FilePicker({ id, label, value, onChange, files }: { id: string; label: string; value: string; onChange: (v: string) => void; files: XmlBlobFileSummary[] }) {
   return (
     <div className="space-y-1">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-9 text-sm">
+        <SelectTrigger id={id} className="h-9 text-sm">
           <SelectValue placeholder="Select a shared XML file" />
         </SelectTrigger>
         <SelectContent>
@@ -393,6 +394,13 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
           </div>
         )}
         {e.scope === 'ancestor' && <div className="mt-2 text-xs text-muted-foreground">Parent of an in-scope search.</div>}
+        {e.warnings.length > 0 && (
+          <div className="mt-2 space-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            {e.warnings.map((w) => (
+              <div key={w}>{w}</div>
+            ))}
+          </div>
+        )}
       </div>
 
       {e.fieldChanges.length > 0 && (
