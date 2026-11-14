@@ -61,15 +61,21 @@ export default function CompareMode() {
 
   const loadFiles = useCallback(() => {
     fetch('/api/xml-files')
-      .then((r) => r.json())
-      .then((d) => {
-        const list: XmlBlobFileSummary[] = d.files ?? [];
-        setFiles(list);
-        // Newest upload as target, next newest as base, unless already chosen
-        setTargetPath((p) => p || list[0]?.pathname || '');
-        setBasePath((p) => p || list[1]?.pathname || '');
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success || !Array.isArray(d.files)) throw new Error(d.error || `Server returned ${r.status}`);
+        return d.files as XmlBlobFileSummary[];
       })
-      .catch(() => toast({ variant: 'destructive', title: 'Shared files unavailable' }));
+      .then((list) => {
+        setFiles(list);
+        // Keep choices that still exist; otherwise newest upload as target, next newest as base
+        const keep = (p: string, fallback?: string) => (list.some((f) => f.pathname === p) ? p : fallback ?? '');
+        setTargetPath((p) => keep(p, list[0]?.pathname));
+        setBasePath((p) => keep(p, list[1]?.pathname));
+      })
+      .catch((error) =>
+        toast({ variant: 'destructive', title: 'Shared files unavailable', description: error instanceof Error ? error.message : String(error) })
+      );
   }, [toast]);
 
   // Refresh after uploads from the sidebar

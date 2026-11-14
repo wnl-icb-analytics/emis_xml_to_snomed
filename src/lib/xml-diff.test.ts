@@ -337,3 +337,21 @@ test('trimForTransport drops guides, then code lists, then refuses', () => {
   assert.throws(() => trimForTransport(r, 100));
   assert.equal(trimForTransport(r, full + 1), r);
 });
+
+test('a code removed from one cluster but kept in another is reported for that cluster', () => {
+  const vs = (description: string, codes: string[]) => ({
+    id: `vs-${description}`,
+    codeSystem: 'SNOMED_CONCEPT',
+    description,
+    values: codes.map((code) => ({ code, displayName: '', includeChildren: false })),
+    exceptions: [],
+  });
+  const a = doc('SET R5', [{ guid: 'a', folder: 'F', name: 'Two lists' }]);
+  const b = doc('SET R6', [{ guid: 'b', folder: 'F', name: 'Two lists' }]);
+  a.reports[0].valueSets = [vs('A_COD', ['1001']), vs('B_COD', ['1001'])];
+  b.reports[0].valueSets = [vs('A_COD', ['1001'])];
+  const r = diffXmlDocuments({ doc: a, fileName: 'a.xml' }, { doc: b, fileName: 'b.xml' });
+  const [e] = r.entries;
+  assert.deepEqual(e.codesRemoved.map((c) => [c.cluster, c.code]), [['B_COD', '1001']]);
+  assert.equal(e.codesAdded.length, 0);
+});
