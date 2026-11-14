@@ -68,18 +68,27 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         <Separator />
-        <SidebarGroup>
-          <SidebarGroupLabel>
-            {mode === 'explore' ? 'Search Reports' : 'Select Reports'}
-          </SidebarGroupLabel>
-          <SidebarGroupContent className="px-2">
-            {mode === 'explore' ? (
-              <FolderTreeNavigation />
-            ) : (
-              <BatchReportSelector />
-            )}
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {mode === 'compare' ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>Compare</SidebarGroupLabel>
+            <SidebarGroupContent className="px-2 text-xs text-muted-foreground">
+              Pick a base and target from the shared XML files. Upload new files above.
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : (
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              {mode === 'explore' ? 'Search Reports' : 'Select Reports'}
+            </SidebarGroupLabel>
+            <SidebarGroupContent className="px-2">
+              {mode === 'explore' ? (
+                <FolderTreeNavigation />
+              ) : (
+                <BatchReportSelector />
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CodeExpansionDocs open={docsOpen} onOpenChange={setDocsOpen} />

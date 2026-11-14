@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-export type AppMode = 'explore' | 'extract';
+export type AppMode = 'explore' | 'extract' | 'compare';
 
 interface AppModeContextType {
   mode: AppMode;
