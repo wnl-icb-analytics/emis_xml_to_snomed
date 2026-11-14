@@ -10,6 +10,7 @@ A Next.js application for analyzing EMIS XML exports and expanding SNOMED codes 
 - **On-demand code expansion**: Query terminology server only when needed
 - **Batched API requests**: Minimize API calls by batching parent codes with ECL OR operators
 - **SQL-ready output**: Copy formatted codes as single-quoted, comma-separated values for SQL IN clauses
+- **Compare mode**: Diff two versions of a search set (e.g. LTC LCS R5 vs R6) and export the diff as JSON or Markdown
 
 ## Setup
 
@@ -66,6 +67,38 @@ npm run start
 3. **Select Features**: Check boxes next to searches you want to analyze, or use "Select All"
 4. **Expand Codes**: Click "Expand Codes" on individual features to query the terminology server
 5. **Copy SQL**: Use the "Copy SQL" button to copy formatted codes for database queries
+
+## Comparing search sets
+
+Compare mode diffs two shared XML files and shows what changed per search: properties (name, folder, description, parent), code changes by code list, library items, and a line diff of the implementation guide, so logic changes read in plain English.
+
+EMIS re-exports give every search, folder and parent a new GUID, so searches are matched on:
+
+1. Folder path (without the root folder) and name. Duplicates pair by parent and content.
+2. Identical content, when the folder (years normalised) or name is related.
+3. Shared criteria group IDs, which survive re-export.
+4. Unique name and search type.
+5. Leftover duplicates: parent search via the matches so far, criteria group IDs, then code overlap of at least 0.5.
+6. Versioned replacements in the same folder (years normalised): the same bracketed search ID ignoring version tokens (`[ICS_HTN_21 v3 FYYTD]` → `[ICS_HTN_21 v4_NICE FYYTD]`), or name-token overlap of at least 0.5 plus a shared criterion or code. Tied candidates stay unmatched.
+
+Parent and population-criteria references are compared through these matches. References to searches outside both files produce a warning. Guide diffs map renamed searches' old names to new ones, so the diff shows logic changes only.
+
+An optional scope file limits the view to searches you depend on. It takes a JSON array of `{ "folder", "name" }` rows, or an object with a `searches` array whose rows may carry `models` or `tags`. Searches that in-scope ones depend on (parents and population criteria, transitively) are flagged, and unchanged in-scope searches that depend on a changed search are listed with those changes. Scope rows found in neither file, or only under their old name, are listed for follow-up.
+
+Downloads:
+
+- **JSON** (`schemaVersion` 1): every search with its status; changed searches carry code lists, guide patches and, for added/removed searches, the full guide.
+- **Markdown**: summary, scope rows to check, folder moves, changed folders, impact by scope tag, added/removed lists, and per-search changes with `diff` blocks.
+
+`/api/xml-diff` keeps responses under 4 MB (Vercel's limit is 4.5 MB) by leaving out guides, then code lists, for added/removed searches. The command line has no limit.
+
+The same output is available from the command line:
+
+```bash
+npx tsx scripts/diff-xml.ts <base.xml> <target.xml> <outPrefix> [scope.json] [scopeLabel]
+```
+
+This writes `<outPrefix>.json`, `<outPrefix>.md` and, with a scope, `<outPrefix>.scope.md`.
 
 ## Architecture
 

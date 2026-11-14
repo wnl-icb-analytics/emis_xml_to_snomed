@@ -3,6 +3,7 @@
 import { useAppMode } from '@/contexts/AppModeContext';
 import ExploreMode from '@/components/explore-mode';
 import BatchExtractor from '@/components/batch-extractor';
+import CompareMode from '@/components/compare-mode';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Card } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
@@ -31,5 +32,6 @@ export default function HomePage() {
   }
 
   // Render the appropriate mode component
+  if (mode === 'compare') return <CompareMode />;
   return mode === 'extract' ? <BatchExtractor /> : <ExploreMode />;
 }
