@@ -2,27 +2,38 @@
  * Diffs two EMIS XML exports (e.g. LTC LCS R5 vs R6).
  *
  * Re-exports rotate report, folder and parent GUIDs, so searches are matched on
- * folder path + name, then by content, then by stable criteria-group IDs, then by
- * unique name. GUID references (parents, population criteria) are compared via
- * the match map, never by raw value.
+ * folder path + name first and then by content and stable IDs (see matchReports).
+ * GUID references (parents, population criteria) are compared through the match
+ * map, never by raw value.
  */
 import { structuredPatch } from 'diff';
 import type { EmisReport, EmisXmlDocument, SearchCriterion } from './types';
 import { buildImplementationGuideMarkdown } from './agent-report-utils';
+import { generateValueSetFriendlyName } from './valueset-utils';
 
 export const XML_DIFF_SCHEMA_VERSION = '1';
 
 export type SearchDiffStatus = 'added' | 'removed' | 'modified' | 'moved' | 'renamed' | 'unchanged';
-export type MatchMethod = 'path' | 'content' | 'stable-ids' | 'name' | 'similar-name';
-
-/** Minimum name-token overlap (intersection / union) to pair a versioned replacement */
-const SIMILAR_NAME_THRESHOLD = 0.5;
+export type MatchMethod = 'path' | 'content' | 'stable-ids' | 'name' | 'similar-name' | 'codes';
+/** direct: listed in the scope; ancestor: a search a listed one depends on (parent or population criteria) */
 export type ScopeRelation = 'direct' | 'ancestor';
+
+/** Minimum name-token overlap (intersection / union) to treat two names as related */
+const SIMILAR_NAME_THRESHOLD = 0.5;
+/** Minimum code overlap (intersection / union) to pair ambiguous duplicate searches */
+const DUPLICATE_CODE_THRESHOLD = 0.5;
+
+export const MATCHING_DESCRIPTION =
+  'Folder + name (duplicates by parent and content); then identical content with a related folder or name; ' +
+  'shared criteria-group IDs; unique name; code overlap for leftover duplicates; versioned names with shared criteria or codes. ' +
+  'Search GUIDs rotate between exports and are ignored.';
 
 export interface SearchRef {
   folder: string;
   name: string;
   type: EmisReport['reportType'];
+  /** Parent search name, when the search is based on another search */
+  parent?: string;
 }
 
 export interface CodeRef {
@@ -36,10 +47,27 @@ export interface CodeRef {
   excluded: boolean;
 }
 
+export type FieldName = 'name' | 'folder' | 'description' | 'parent' | 'reportType' | 'populationCriteria';
+
+export const FIELD_LABEL: Record<FieldName, string> = {
+  name: 'Name',
+  folder: 'Folder',
+  description: 'Description',
+  parent: 'Parent search',
+  reportType: 'Search type',
+  populationCriteria: 'Population criteria',
+};
+
 export interface FieldChange {
-  field: 'name' | 'folder' | 'description' | 'parent' | 'reportType' | 'populationCriteria';
+  field: FieldName;
   from: string | null;
   to: string | null;
+}
+
+export interface UpstreamChange {
+  folder: string;
+  name: string;
+  status: SearchDiffStatus;
 }
 
 export interface SearchDiffEntry {
@@ -61,13 +89,19 @@ export interface SearchDiffEntry {
   guidePatch?: string;
   /** Full guide for added/removed searches */
   guide?: string;
+  /** Set when the guide was dropped to keep an API response small */
+  guideOmitted?: boolean;
+  /** Number of codes dropped to keep an API response small */
+  codesOmitted?: number;
   /** References that could not be checked, e.g. a parent search outside both exports */
   warnings: string[];
-  /** Searches in the newer side (older side for removed) that use this one as their parent */
+  /** Searches that use this one as parent or population criteria (newer side; older side for removed) */
   dependents: number;
   scope?: ScopeRelation;
   /** Labels from the scope list, e.g. dbt model names */
   scopeTags?: string[];
+  /** In-scope searches only: changed searches they depend on through parents or population criteria */
+  upstreamChanges?: UpstreamChange[];
 }
 
 export interface FolderSummary {
@@ -97,6 +131,21 @@ export interface DiffScopeInput {
   searches: Array<{ folder: string; name: string; tags?: string[] }>;
 }
 
+export interface DiffScopeSummary {
+  label: string;
+  /** Distinct folder + name rows in the scope list */
+  searches: number;
+  matched: number;
+  /** Searches that in-scope searches depend on */
+  ancestors: number;
+  /** In-scope searches unchanged themselves but depending on a changed search */
+  affectedUpstream: number;
+  /** Scope rows found in neither file */
+  unmatched: Array<{ folder: string; name: string }>;
+  /** Scope rows found only under their older (base) folder or name */
+  baseOnly: Array<{ folder: string; name: string }>;
+}
+
 export interface XmlDiffResult {
   schemaVersion: string;
   generatedAt: string;
@@ -105,7 +154,9 @@ export interface XmlDiffResult {
   summary: Record<SearchDiffStatus, number>;
   folders: FolderSummary[];
   folderMoves: FolderMove[];
-  scope?: { label: string; searches: number; matched: number; ancestors: number };
+  scope?: DiffScopeSummary;
+  /** Present when guides or code lists were dropped to fit a size limit */
+  trimmed?: { guides: number; codeLists: number };
   /** Every search; unchanged entries carry identity only */
   entries: SearchDiffEntry[];
 }
@@ -121,9 +172,9 @@ export interface DiffInputSide {
 const folderOf = (r: EmisReport) => r.rule.split(' > ').slice(1).join(' > ');
 const keyOf = (r: EmisReport) => `${folderOf(r)} :: ${r.name}`;
 const rootLabel = (doc: EmisXmlDocument) => doc.reports[0]?.rule.split(' > ')[0] ?? '';
-const refOf = (r: EmisReport): SearchRef => ({ folder: folderOf(r), name: r.name, type: r.reportType });
 /** Newer side's identity, or the older side for removed searches */
 export const entryRef = (e: SearchDiffEntry): SearchRef => (e.target ?? e.base)!;
+const emptyCounts = (): Record<SearchDiffStatus, number> => ({ added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 });
 
 /** Keys holding GUIDs that rotate on re-export, or identity fields compared separately */
 const VOLATILE_KEYS = new Set(['id', 'xmlId', 'rule', 'name', 'searchName', 'parentReportId', 'reportGuid']);
@@ -162,6 +213,8 @@ function evidenceOf(r: EmisReport): Set<string> {
   return out;
 }
 
+const codeSet = (r: EmisReport) => new Set(r.valueSets.flatMap((vs) => vs.values.map((v) => v.code)));
+
 function collectCodes(r: EmisReport): Map<string, CodeRef> {
   const out = new Map<string, CodeRef>();
   for (const vs of r.valueSets) {
@@ -184,15 +237,7 @@ function collectCodes(r: EmisReport): Map<string, CodeRef> {
     for (const e of vs.exceptions) {
       const key = `x|${cluster ?? ''}|${codeSystem}|${e.code}`;
       if (!out.has(key)) {
-        out.set(key, {
-          code: e.code,
-          displayName: e.displayName || '',
-          codeSystem,
-          cluster,
-          includeChildren: false,
-          isRefset: false,
-          excluded: true,
-        });
+        out.set(key, { code: e.code, displayName: e.displayName || '', codeSystem, cluster, includeChildren: false, isRefset: false, excluded: true });
       }
     }
   }
@@ -200,6 +245,34 @@ function collectCodes(r: EmisReport): Map<string, CodeRef> {
 }
 
 const libraryItems = (r: EmisReport) => new Set((r.criteriaGroups ?? []).flatMap((g) => g.libraryItemRefs ?? []));
+
+const jaccard = <T,>(a: Set<T>, b: Set<T>) => {
+  let inter = 0;
+  a.forEach((x) => b.has(x) && inter++);
+  return inter / (a.size + b.size - inter || 1);
+};
+
+const tokenList = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/([a-z])(\d)|(\d)([a-z])/g, '$1$3 $2$4')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+const tokens = (s: string) => new Set(tokenList(s));
+/** Leading bracketed search ID without version tokens: "[ICS_HTN_21 v4_NICE FYYTD]" → "ics htn 21 fyytd" */
+const tagOf = (s: string) => {
+  const m = s.match(/^\s*\[([^\]]+)\]/);
+  if (!m) return '';
+  return tokenList(m[1].toLowerCase().replace(/_/g, ' ').replace(/\bv\d+\b|\bnice\b/g, ' ')).join(' ');
+};
+const namesRelated = (a: EmisReport, b: EmisReport) => {
+  const ta = tagOf(a.name);
+  return (!!ta && ta === tagOf(b.name)) || jaccard(tokens(a.name), tokens(b.name)) >= SIMILAR_NAME_THRESHOLD;
+};
+/** Folder with financial years normalised, so "2025-26 Outcome" and "2026-27 Outcome" compare equal */
+const normFolder = (r: EmisReport) => folderOf(r).replace(/\b20\d\d-\d\d\b/g, 'YYYY-YY');
+
+const vsPrefix = (name: string) => generateValueSetFriendlyName(name, 0).replace(/_vs\d+$/, '');
 
 function guideText(r: EmisReport, all: EmisReport[]): string {
   // Folder/Source lines are reported as field changes; strip to avoid noise
@@ -211,7 +284,7 @@ function guideText(r: EmisReport, all: EmisReport[]): string {
 
 function unifiedPatch(a: string, b: string): string | undefined {
   if (a === b) return undefined;
-  const patch = structuredPatch('base', 'target', a, b, '', '', { context: 2 });
+  const patch = structuredPatch('base', 'target', `${a}\n`, `${b}\n`, '', '', { context: 2 });
   if (patch.hunks.length === 0) return undefined;
   return patch.hunks
     .map((h) => [`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`, ...h.lines].join('\n'))
@@ -221,22 +294,36 @@ function unifiedPatch(a: string, b: string): string | undefined {
 interface Side {
   reports: EmisReport[];
   byGuid: Map<string, EmisReport>;
-  children: Map<string, number>;
+  /** GUID → number of searches referencing it as parent or population criteria */
+  referencedBy: Map<string, number>;
 }
+
+const popGuids = (r: EmisReport) => (r.criteriaGroups ?? []).flatMap((g) => g.populationCriteria.map((p) => p.reportGuid));
+const popParent = (r: EmisReport) => (r.parentType === 'POP' ? r.parentReportId : undefined);
+/** GUIDs this search depends on: its parent and population-criteria searches */
+const dependencyGuids = (r: EmisReport) => [...new Set([popParent(r), ...popGuids(r)].filter((g): g is string => !!g))];
 
 function indexSide(doc: EmisXmlDocument): Side {
   const byGuid = new Map(doc.reports.map((r) => [r.xmlId, r]));
-  const children = new Map<string, number>();
+  const referencedBy = new Map<string, number>();
   for (const r of doc.reports) {
-    if (r.parentReportId) children.set(r.parentReportId, (children.get(r.parentReportId) ?? 0) + 1);
+    for (const g of dependencyGuids(r)) referencedBy.set(g, (referencedBy.get(g) ?? 0) + 1);
   }
-  return { reports: doc.reports, byGuid, children };
+  return { reports: doc.reports, byGuid, referencedBy };
+}
+
+function refOf(r: EmisReport, side: Side): SearchRef {
+  const p = popParent(r);
+  const parent = p ? side.byGuid.get(p)?.name : undefined;
+  return { folder: folderOf(r), name: r.name, type: r.reportType, ...(parent ? { parent } : {}) };
 }
 
 // === Matching ===
 
+type Pairs = Map<EmisReport, { other: EmisReport; by: MatchMethod }>;
+
 function matchReports(base: Side, target: Side) {
-  const pairs = new Map<EmisReport, { other: EmisReport; by: MatchMethod }>();
+  const pairs: Pairs = new Map();
   const reverse = new Map<EmisReport, EmisReport>();
   const fp = new Map<EmisReport, string>();
   const getFp = (r: EmisReport) => {
@@ -248,122 +335,164 @@ function matchReports(base: Side, target: Side) {
     pairs.set(a, { other: b, by });
     reverse.set(b, a);
   };
+  const openB = (r: EmisReport) => !pairs.has(r);
+  const openT = (r: EmisReport) => !reverse.has(r);
 
-  // 1. Path + name. Duplicates pair by parent + fingerprint, fingerprint, stable IDs, then parent;
-  //    a position fallback applies only when exactly one search is left on each side
-  const parentKey = (r: EmisReport, side: Side) => {
-    const p = r.parentReportId ? side.byGuid.get(r.parentReportId) : undefined;
-    return p ? keyOf(p) : (r.parentType ?? '');
+  /** Pairs within two lists when a key is non-empty and unique on both sides */
+  const pairUnique = (bs: EmisReport[], ts: EmisReport[], keyB: (r: EmisReport) => string, keyT: (r: EmisReport) => string, by: MatchMethod) => {
+    const index = (rs: EmisReport[], key: (r: EmisReport) => string) => {
+      const m = new Map<string, EmisReport | null>();
+      for (const r of rs) {
+        const k = key(r);
+        if (k) m.set(k, m.has(k) ? null : r);
+      }
+      return m;
+    };
+    const ib = index(bs.filter(openB), keyB);
+    const it = index(ts.filter(openT), keyT);
+    for (const [k, b] of ib) {
+      const t = it.get(k);
+      if (b && t) link(b, t, by);
+    }
   };
-  const bParent = (r: EmisReport) => parentKey(r, base);
-  const tParent = (r: EmisReport) => parentKey(r, target);
+
+  // Parent identity by name, usable before parents are matched; '' when not based on another search
+  const parentName = (r: EmisReport, side: Side) => {
+    const g = popParent(r);
+    if (!g) return r.parentType ?? '';
+    const p = side.byGuid.get(g);
+    return p ? keyOf(p) : 'unresolved';
+  };
+
+  // 1. Folder + name. Within a duplicate group, pair by parent + content, then content.
+  //    Groups still ambiguous are resolved after the global passes, when parents are matched.
   const group = (rs: EmisReport[]) => {
     const m = new Map<string, EmisReport[]>();
     for (const r of rs) m.set(keyOf(r), [...(m.get(keyOf(r)) ?? []), r]);
     return m;
   };
   const tg = group(target.reports);
+  const deferred: Array<{ bs: EmisReport[]; ts: EmisReport[] }> = [];
   for (const [key, bs] of group(base.reports)) {
-    const ts = [...(tg.get(key) ?? [])];
+    const ts = tg.get(key) ?? [];
     if (ts.length === 0) continue;
-    const remaining = [...bs];
-    // Each pick returns [baseValue, targetValue]; parent keys differ per side
-    const picks: Array<(b: EmisReport, t: EmisReport) => [string, string]> = [
-      (b, t) => [`${bParent(b)}\u0000${getFp(b)}`, `${tParent(t)}\u0000${getFp(t)}`],
-      (b, t) => [getFp(b), getFp(t)],
-      (b, t) => [stableSig(b), stableSig(t)],
-      (b, t) => [bParent(b), tParent(t)],
-    ];
-    for (const pick of picks) {
-      for (const b of [...remaining]) {
-        const i = ts.findIndex((t) => {
-          const [x, y] = pick(b, t);
-          return x !== '' && x === y;
-        });
-        if (i >= 0) {
-          link(b, ts[i], 'path');
-          ts.splice(i, 1);
-          remaining.splice(remaining.indexOf(b), 1);
-        }
-      }
+    if (bs.length === 1 && ts.length === 1) {
+      link(bs[0], ts[0], 'path');
+      continue;
     }
-    // Ambiguous leftovers fall through to the global passes below
-    if (remaining.length === 1 && ts.length === 1) link(remaining[0], ts[0], 'path');
-  }
-
-  // 2-4. Unmatched: content, stable IDs, then name — each requires uniqueness on both sides
-  const passes: Array<[MatchMethod, (r: EmisReport) => string]> = [
-    ['content', getFp],
-    ['stable-ids', stableSig],
-    ['name', (r) => r.name],
-  ];
-  for (const [by, sig] of passes) {
-    const unique = (rs: EmisReport[]) => {
-      const m = new Map<string, EmisReport | null>();
-      for (const r of rs) {
-        const s = sig(r);
-        if (!s) continue;
-        m.set(s, m.has(s) ? null : r);
+    // Searches identical in parent and content are interchangeable, so pair them in order
+    const pairEqual = (kb: (r: EmisReport) => string, kt: (r: EmisReport) => string) => {
+      for (const b of bs.filter(openB)) {
+        const t = ts.find((x) => openT(x) && kt(x) === kb(b));
+        if (t) link(b, t, 'path');
       }
-      return m;
     };
-    const ub = unique(base.reports.filter((r) => !pairs.has(r)));
-    const ut = unique(target.reports.filter((r) => !reverse.has(r)));
-    for (const [s, b] of ub) {
-      const t = ut.get(s);
-      if (b && t) link(b, t, by);
+    pairEqual((r) => `${parentName(r, base)}\u0000${getFp(r)}`, (r) => `${parentName(r, target)}\u0000${getFp(r)}`);
+    pairUnique(bs, ts, getFp, getFp, 'path');
+    const lb = bs.filter(openB);
+    const lt = ts.filter(openT);
+    if (lb.length === 1 && lt.length === 1) link(lb[0], lt[0], 'path');
+    else if (lb.length && lt.length) deferred.push({ bs, ts });
+  }
+
+  const unmatchedB = () => base.reports.filter(openB);
+  const unmatchedT = () => target.reports.filter(openT);
+
+  // 2. Identical content, unique on both sides, with a related folder or name (guards against
+  //    unrelated searches that happen to share logic)
+  {
+    const ub = new Map<string, EmisReport | null>();
+    for (const r of unmatchedB()) ub.set(getFp(r), ub.has(getFp(r)) ? null : r);
+    const ut = new Map<string, EmisReport | null>();
+    for (const r of unmatchedT()) ut.set(getFp(r), ut.has(getFp(r)) ? null : r);
+    for (const [k, b] of ub) {
+      const t = ut.get(k);
+      if (b && t && (normFolder(b) === normFolder(t) || namesRelated(b, t))) link(b, t, 'content');
     }
   }
 
-  // 5. Versioned replacements: same folder (years normalised), same type, and either
-  //    either the same bracketed search ID ignoring version tokens, or name token Jaccard >= threshold
-  //    plus shared criterion IDs or codes. Equal-score alternatives are left unmatched.
-  const tokenList = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/([a-z])(\d)|(\d)([a-z])/g, '$1$3 $2$4')
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-  const tokens = (s: string) => new Set(tokenList(s));
-  const tagOf = (s: string) => {
-    const m = s.match(/^\s*\[([^\]]+)\]/);
-    if (!m) return '';
-    const stripped = m[1].toLowerCase().replace(/_/g, ' ').replace(/\bv\d+\b|\bnice\b/g, ' ');
-    return tokenList(stripped).join(' ');
-  };
-  const jaccard = (a: Set<string>, b: Set<string>) => {
-    let inter = 0;
-    a.forEach((x) => b.has(x) && inter++);
-    return inter / (a.size + b.size - inter || 1);
-  };
-  const normFolder = (r: EmisReport) => folderOf(r).replace(/\b20\d\d-\d\d\b/g, 'YYYY-YY');
-  const candidates: Array<{ b: EmisReport; t: EmisReport; score: number }> = [];
-  const ut = target.reports.filter((r) => !reverse.has(r));
-  for (const b of base.reports.filter((r) => !pairs.has(r))) {
-    const tb = tokens(b.name);
-    const tagB = tagOf(b.name);
-    for (const t of ut) {
-      if (t.reportType !== b.reportType || normFolder(t) !== normFolder(b)) continue;
-      if (tagB && tagB === tagOf(t.name)) {
-        candidates.push({ b, t, score: 1 });
-        continue;
+  // 3. Shared criteria-group IDs, unique on both sides
+  pairUnique(unmatchedB(), unmatchedT(), stableSig, stableSig, 'stable-ids');
+
+  // 4. Unique name and same search type
+  pairUnique(unmatchedB(), unmatchedT(), (r) => `${r.reportType}\u0000${r.name}`, (r) => `${r.reportType}\u0000${r.name}`, 'name');
+
+  // 5. Leftover duplicate groups: parent through the match map, stable IDs, then best code overlap
+  for (const { bs, ts } of deferred) {
+    const parentVia = (r: EmisReport, side: Side, viaPairs: boolean) => {
+      const g = popParent(r);
+      const p = g && side.byGuid.get(g);
+      if (!p) return '';
+      const id = viaPairs ? pairs.get(p)?.other : p;
+      return id ? id.xmlId : '';
+    };
+    pairUnique(bs, ts, (r) => parentVia(r, base, true), (r) => parentVia(r, target, false), 'path');
+    pairUnique(bs, ts, stableSig, stableSig, 'path');
+    const scored: Array<{ b: EmisReport; t: EmisReport; score: number }> = [];
+    for (const b of bs.filter(openB)) {
+      for (const t of ts.filter(openT)) {
+        const score = jaccard(codeSet(b), codeSet(t));
+        if (score >= DUPLICATE_CODE_THRESHOLD) scored.push({ b, t, score });
       }
-      const score = jaccard(tb, tokens(t.name));
-      if (score < SIMILAR_NAME_THRESHOLD) continue;
-      const eb = evidenceOf(b);
-      if ([...evidenceOf(t)].some((x) => eb.has(x))) candidates.push({ b, t, score });
     }
+    linkBest(scored, 'codes');
+    const lb = bs.filter(openB);
+    const lt = ts.filter(openT);
+    if (lb.length === 1 && lt.length === 1) link(lb[0], lt[0], 'path');
   }
-  const open = (c: (typeof candidates)[number]) => !pairs.has(c.b) && !reverse.has(c.t);
-  candidates.sort((x, y) => y.score - x.score || keyOf(x.b).localeCompare(keyOf(y.b)) || keyOf(x.t).localeCompare(keyOf(y.t)));
-  for (const c of candidates) {
-    if (!open(c)) continue;
-    const tied = candidates.some((o) => o !== c && o.score === c.score && (o.b === c.b || o.t === c.t) && open(o));
-    if (!tied) link(c.b, c.t, 'similar-name');
+
+  // 6. Versioned replacements: same folder (years normalised) and type, plus the same bracketed
+  //    search ID, or related names with shared criterion IDs or codes
+  {
+    const scored: Array<{ b: EmisReport; t: EmisReport; score: number }> = [];
+    const ut = unmatchedT();
+    for (const b of unmatchedB()) {
+      const tagB = tagOf(b.name);
+      for (const t of ut) {
+        if (t.reportType !== b.reportType || normFolder(t) !== normFolder(b)) continue;
+        if (tagB && tagB === tagOf(t.name)) {
+          scored.push({ b, t, score: 1 });
+          continue;
+        }
+        const score = jaccard(tokens(b.name), tokens(t.name));
+        if (score < SIMILAR_NAME_THRESHOLD) continue;
+        const eb = evidenceOf(b);
+        if ([...evidenceOf(t)].some((x) => eb.has(x))) scored.push({ b, t, score });
+      }
+    }
+    linkBest(scored, 'similar-name');
+  }
+
+  /** Greedy best-score pairing; candidates tied with another open option are left unmatched */
+  function linkBest(scored: Array<{ b: EmisReport; t: EmisReport; score: number }>, by: MatchMethod) {
+    const open = (c: (typeof scored)[number]) => openB(c.b) && openT(c.t);
+    scored.sort((x, y) => y.score - x.score || keyOf(x.b).localeCompare(keyOf(y.b)) || keyOf(x.t).localeCompare(keyOf(y.t)));
+    for (const c of scored) {
+      if (!open(c)) continue;
+      const tied = scored.some((o) => o !== c && o.score === c.score && (o.b === c.b || o.t === c.t) && open(o));
+      if (!tied) link(c.b, c.t, by);
+    }
   }
 
   return { pairs, reverse, getFp };
 }
+
+/** Maps renamed searches' base names and ValueSet name prefixes to their target equivalents */
+function renameMap(pairs: Pairs): Array<[string, string]> {
+  const out = new Map<string, string>();
+  for (const [b, { other: t }] of pairs) {
+    if (b.name === t.name) continue;
+    // Short names would replace unrelated text
+    if (b.name.length >= 6) out.set(b.name, t.name);
+    if (b.searchName && b.searchName.length >= 6 && b.searchName !== t.searchName) out.set(b.searchName, t.searchName);
+    const bp = vsPrefix(b.name);
+    const tp = vsPrefix(t.name);
+    if (bp && bp !== tp) out.set(`${bp}_vs`, `${tp}_vs`);
+  }
+  return [...out].sort((a, b) => b[0].length - a[0].length);
+}
+
+const applyRenames = (text: string, renames: Array<[string, string]>) => renames.reduce((s, [from, to]) => s.split(from).join(to), text);
 
 // === Diff ===
 
@@ -375,15 +504,16 @@ export function diffXmlDocuments(
   const base = indexSide(baseIn.doc);
   const target = indexSide(targetIn.doc);
   const { pairs, reverse, getFp } = matchReports(base, target);
+  const renames = renameMap(pairs);
+  // Library-item names are inferred from wrapper searches; use both exports so labels agree
+  const allReports = [...base.reports, ...target.reports];
 
   const parentLabel = (r: EmisReport, side: Side) => {
-    if (r.parentType === 'POP' && r.parentReportId) {
-      const p = side.byGuid.get(r.parentReportId);
-      return p ? `${folderOf(p)} :: ${p.name}` : `unknown search ${r.parentReportId}`;
-    }
-    return r.parentType ?? null;
+    const g = popParent(r);
+    if (!g) return r.parentType ?? null;
+    const p = side.byGuid.get(g);
+    return p ? keyOf(p) : `unknown search ${g}`;
   };
-  const popGuids = (r: EmisReport) => (r.criteriaGroups ?? []).flatMap((g) => g.populationCriteria.map((p) => p.reportGuid));
 
   const entries: SearchDiffEntry[] = [];
   const empty = () => ({
@@ -406,17 +536,24 @@ export function diffXmlDocuments(
       const e: SearchDiffEntry = {
         ...empty(),
         status: 'removed',
-        base: refOf(b),
+        base: refOf(b, base),
         codesRemoved: [...collectCodes(b).values()],
         guide: guideText(b, base.reports),
-        dependents: base.children.get(b.xmlId) ?? 0,
+        dependents: base.referencedBy.get(b.xmlId) ?? 0,
       };
       entries.push(e);
       entryReports.set(e, { b });
       continue;
     }
     const t = m.other;
-    const e: SearchDiffEntry = { ...empty(), status: 'unchanged', matchedBy: m.by, base: refOf(b), target: refOf(t), dependents: target.children.get(t.xmlId) ?? 0 };
+    const e: SearchDiffEntry = {
+      ...empty(),
+      status: 'unchanged',
+      matchedBy: m.by,
+      base: refOf(b, base),
+      target: refOf(t, target),
+      dependents: target.referencedBy.get(t.xmlId) ?? 0,
+    };
     e.moved = folderOf(b) !== folderOf(t);
     e.renamed = b.name !== t.name;
     if (e.renamed) e.fieldChanges.push({ field: 'name', from: b.name, to: t.name });
@@ -426,8 +563,7 @@ export function diffXmlDocuments(
     }
     if (b.reportType !== t.reportType) e.fieldChanges.push({ field: 'reportType', from: b.reportType, to: t.reportType });
 
-    // Parent and population references: same when the base reference matched the target one.
-    // GUIDs rotate between exports, so references outside both files cannot be compared.
+    // GUIDs rotate between exports, so references outside both files cannot be compared
     const sameRef = (bGuid: string | undefined, tGuid: string | undefined, what: string) => {
       if (!bGuid || !tGuid) return !bGuid && !tGuid;
       const bp = base.byGuid.get(bGuid);
@@ -438,7 +574,6 @@ export function diffXmlDocuments(
       }
       return !!bp && !!tp && pairs.get(bp)?.other === tp;
     };
-    const popParent = (r: EmisReport) => (r.parentType === 'POP' ? r.parentReportId : undefined);
     const parentSame = b.parentType === t.parentType && sameRef(popParent(b), popParent(t), 'Parent search');
     if (!parentSame) e.fieldChanges.push({ field: 'parent', from: parentLabel(b, base), to: parentLabel(t, target) });
 
@@ -466,11 +601,11 @@ export function diffXmlDocuments(
     e.libraryItemsAdded = [...tl].filter((x) => !bl.has(x));
     e.libraryItemsRemoved = [...bl].filter((x) => !tl.has(x));
 
-    const bodyChanged = getFp(b) !== getFp(t);
     e.contentChanged =
-      bodyChanged || !parentSame || !popSame || e.fieldChanges.some((f) => f.field === 'description' || f.field === 'reportType');
+      getFp(b) !== getFp(t) || !parentSame || !popSame || e.fieldChanges.some((f) => f.field === 'description' || f.field === 'reportType');
     if (e.contentChanged) {
-      e.guidePatch = unifiedPatch(guideText(b, base.reports), guideText(t, target.reports));
+      // Renames are reported as field changes; map base names to target names so the patch shows logic only
+      e.guidePatch = unifiedPatch(applyRenames(guideText(b, allReports), renames), guideText(t, allReports));
     }
     e.status = e.contentChanged ? 'modified' : e.moved ? 'moved' : e.renamed ? 'renamed' : 'unchanged';
     entries.push(e);
@@ -482,24 +617,24 @@ export function diffXmlDocuments(
     const e: SearchDiffEntry = {
       ...empty(),
       status: 'added',
-      target: refOf(t),
+      target: refOf(t, target),
       codesAdded: [...collectCodes(t).values()],
       guide: guideText(t, target.reports),
-      dependents: target.children.get(t.xmlId) ?? 0,
+      dependents: target.referencedBy.get(t.xmlId) ?? 0,
     };
     entries.push(e);
     entryReports.set(e, { t });
   }
 
-  const scopeInfo = options.scope ? applyScope(entries, entryReports, options.scope, base, target) : undefined;
+  const scopeInfo = options.scope ? applyScope(entryReports, options.scope, base, target) : undefined;
 
-  const summary: Record<SearchDiffStatus, number> = { added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 };
+  const summary = emptyCounts();
   const folders = new Map<string, FolderSummary>();
   const moves = new Map<string, FolderMove>();
   for (const e of entries) {
     summary[e.status]++;
-    const folder = (e.target ?? e.base)!.folder;
-    const f = folders.get(folder) ?? { folder, added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 };
+    const folder = entryRef(e).folder;
+    const f = folders.get(folder) ?? { folder, ...emptyCounts() };
     f[e.status]++;
     folders.set(folder, f);
     if (e.moved && e.base && e.target) {
@@ -511,8 +646,8 @@ export function diffXmlDocuments(
   }
 
   const order: Record<SearchDiffStatus, number> = { modified: 0, added: 1, removed: 2, moved: 3, renamed: 4, unchanged: 5 };
-  const sortKey = (e: SearchDiffEntry) => `${(e.target ?? e.base)!.folder} :: ${(e.target ?? e.base)!.name}`;
-  const kept = entries.sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || order[a.status] - order[b.status]);
+  const sortKey = (e: SearchDiffEntry) => `${entryRef(e).folder} :: ${entryRef(e).name}`;
+  entries.sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || order[a.status] - order[b.status]);
 
   return {
     schemaVersion: XML_DIFF_SCHEMA_VERSION,
@@ -523,22 +658,26 @@ export function diffXmlDocuments(
     folders: [...folders.values()].sort((a, b) => a.folder.localeCompare(b.folder)),
     folderMoves: [...moves.values()].sort((a, b) => b.searches - a.searches),
     scope: scopeInfo,
-    entries: kept,
+    entries,
   };
 }
 
-/** Marks entries in scope (listed searches) and their ancestors (parent chain, either side) */
+/**
+ * Marks listed searches as direct, the searches they depend on (parents and population
+ * criteria, transitively, in either export) as ancestors, and records changed dependencies.
+ */
 function applyScope(
-  entries: SearchDiffEntry[],
   reports: Map<SearchDiffEntry, { b?: EmisReport; t?: EmisReport }>,
   scope: DiffScopeInput,
   base: Side,
   target: Side
-) {
-  const wanted = new Map<string, string[]>();
+): DiffScopeSummary {
+  const wanted = new Map<string, { folder: string; name: string; tags: Set<string> }>();
   for (const s of scope.searches) {
     const k = `${s.folder} :: ${s.name}`;
-    wanted.set(k, [...(wanted.get(k) ?? []), ...(s.tags ?? [])]);
+    const w = wanted.get(k) ?? { folder: s.folder, name: s.name, tags: new Set<string>() };
+    s.tags?.forEach((x) => w.tags.add(x));
+    wanted.set(k, w);
   }
   const byReport = new Map<EmisReport, SearchDiffEntry>();
   for (const [e, { b, t }] of reports) {
@@ -546,17 +685,19 @@ function applyScope(
     if (t) byReport.set(t, e);
   }
 
-  const hit = new Set<string>();
+  const hitTarget = new Set<string>();
+  const hitBase = new Set<string>();
   const direct: SearchDiffEntry[] = [];
   for (const [e, { b, t }] of reports) {
     const tags = new Set<string>();
     let found = false;
-    for (const r of [b, t]) {
+    for (const [r, hits] of [[b, hitBase], [t, hitTarget]] as const) {
       const k = r && keyOf(r);
-      if (k && wanted.has(k)) {
+      const w = k ? wanted.get(k) : undefined;
+      if (k && w) {
         found = true;
-        hit.add(k);
-        wanted.get(k)!.forEach((x) => tags.add(x));
+        hits.add(k);
+        w.tags.forEach((x) => tags.add(x));
       }
     }
     if (found) {
@@ -567,25 +708,83 @@ function applyScope(
   }
 
   let ancestors = 0;
+  let affectedUpstream = 0;
   for (const e of direct) {
     const { b, t } = reports.get(e)!;
-    for (const [r, side] of [[b, base], [t, target]] as const) {
-      let cur = r;
-      const seen = new Set<EmisReport>();
-      while (cur?.parentReportId && !seen.has(cur)) {
-        seen.add(cur);
-        const p = side.byGuid.get(cur.parentReportId);
-        const pe = p && byReport.get(p);
-        if (pe && !pe.scope) {
-          pe.scope = 'ancestor';
-          ancestors++;
+    const changed = new Map<SearchDiffEntry, UpstreamChange>();
+    for (const [start, side] of [[b, base], [t, target]] as const) {
+      if (!start) continue;
+      const seen = new Set<EmisReport>([start]);
+      const queue = [start];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const g of dependencyGuids(cur)) {
+          const dep = side.byGuid.get(g);
+          if (!dep || seen.has(dep)) continue;
+          seen.add(dep);
+          queue.push(dep);
+          const de = byReport.get(dep);
+          if (!de) continue;
+          if (!de.scope) {
+            de.scope = 'ancestor';
+            ancestors++;
+          }
+          if (de.status !== 'unchanged' && de !== e) changed.set(de, { folder: entryRef(de).folder, name: entryRef(de).name, status: de.status });
         }
-        cur = p;
       }
+    }
+    if (changed.size) {
+      e.upstreamChanges = [...changed.values()].sort((x, y) => `${x.folder}${x.name}`.localeCompare(`${y.folder}${y.name}`));
+      if (e.status === 'unchanged') affectedUpstream++;
     }
   }
 
-  return { label: scope.label, searches: wanted.size, matched: hit.size, ancestors };
+  const rows = (keys: string[]) => keys.map((k) => ({ folder: wanted.get(k)!.folder, name: wanted.get(k)!.name }));
+  return {
+    label: scope.label,
+    searches: wanted.size,
+    matched: [...wanted.keys()].filter((k) => hitBase.has(k) || hitTarget.has(k)).length,
+    ancestors,
+    affectedUpstream,
+    unmatched: rows([...wanted.keys()].filter((k) => !hitBase.has(k) && !hitTarget.has(k))),
+    baseOnly: rows([...wanted.keys()].filter((k) => hitBase.has(k) && !hitTarget.has(k))),
+  };
+}
+
+/**
+ * Drops guides, then full code lists, from added/removed searches until the serialised result
+ * fits `maxBytes` (serverless responses are capped at 4.5 MB). Throws if it still does not fit.
+ */
+export function trimForTransport(result: XmlDiffResult, maxBytes: number): XmlDiffResult {
+  const size = (r: XmlDiffResult) => new TextEncoder().encode(JSON.stringify(r)).length;
+  if (size(result) <= maxBytes) return result;
+
+  let guides = 0;
+  let codeLists = 0;
+  let out: XmlDiffResult = {
+    ...result,
+    entries: result.entries.map((e) => {
+      if (!e.guide) return e;
+      guides++;
+      return { ...e, guide: undefined, guideOmitted: true };
+    }),
+  };
+  if (size(out) > maxBytes) {
+    out = {
+      ...out,
+      entries: out.entries.map((e) => {
+        const n = e.codesAdded.length + e.codesRemoved.length;
+        if ((e.status !== 'added' && e.status !== 'removed') || n === 0) return e;
+        codeLists++;
+        return { ...e, codesAdded: [], codesRemoved: [], codesOmitted: n };
+      }),
+    };
+  }
+  out.trimmed = { guides, codeLists };
+  if (size(out) > maxBytes) {
+    throw new Error('Diff is too large to return. The files may be unrelated; use scripts/diff-xml.ts for the full output.');
+  }
+  return out;
 }
 
 // === Markdown ===
@@ -599,9 +798,13 @@ const STATUS_LABEL: Record<SearchDiffStatus, string> = {
   unchanged: 'Unchanged',
 };
 
-const esc = (s: string) => s.replace(/\|/g, '\\|');
+/** Escapes Markdown syntax in plain text (search names often contain * and []) */
+const md = (s: string) => s.replace(/[\\`*_[\]<>|]/g, (c) => `\\${c}`).replace(/\n/g, ' ');
+/** Inline code span; backticks inside are replaced */
+const code = (s: string) => `\`${s.replace(/`/g, "'").replace(/\n/g, ' ')}\``;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const codeLine = (c: CodeRef) =>
-  `\`${c.code}\`${c.displayName ? ` ${c.displayName}` : ''}${c.cluster ? ` (${c.cluster})` : ''}${c.excluded ? ' — exception' : ''}${
+  `${code(c.code)}${c.displayName ? ` ${md(c.displayName)}` : ''}${c.cluster ? ` (${md(c.cluster)})` : ''}${c.excluded ? ' — exception' : ''}${
     c.isRefset ? ' — refset' : ''
   }`;
 
@@ -624,30 +827,35 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
   const maxCodes = opts.maxCodes ?? 10;
   const entries = opts.scopeOnly ? result.entries.filter((e) => e.scope) : result.entries;
   const out: string[] = [];
-  out.push(`# Search diff: ${result.base.label} → ${result.target.label}`, '');
-  out.push(`- Base: \`${result.base.fileName}\` (${result.base.searchCount} searches)`);
-  out.push(`- Target: \`${result.target.fileName}\` (${result.target.searchCount} searches)`);
-  if (result.scope) {
+  out.push(`# Search diff: ${md(result.base.label)} → ${md(result.target.label)}`, '');
+  out.push(`- Base: ${code(result.base.fileName)} (${plural(result.base.searchCount, 'search', 'searches')})`);
+  out.push(`- Target: ${code(result.target.fileName)} (${plural(result.target.searchCount, 'search', 'searches')})`);
+  const s = result.scope;
+  if (s) {
     out.push(
-      `- Scope: ${result.scope.label} — ${result.scope.matched}/${result.scope.searches} listed searches found, plus ${result.scope.ancestors} parent searches`
+      `- Scope: ${md(s.label)}: ${s.matched}/${s.searches} listed searches found, plus ${plural(s.ancestors, 'search', 'searches')} they depend on. ` +
+        `${plural(s.affectedUpstream, 'unchanged in-scope search depends', 'unchanged in-scope searches depend')} on a changed search.`
     );
-    if (opts.scopeOnly) out.push('- Showing in-scope searches only');
+    if (opts.scopeOnly) out.push('- Showing in-scope searches and the searches they depend on');
   }
-  out.push(
-    '- Matching: folder + name, then content, then stable criteria-group IDs, then unique name. Search GUIDs rotate between exports and are ignored.',
-    ''
-  );
+  out.push(`- Matching: ${MATCHING_DESCRIPTION}`, '');
 
-  const counts: Record<SearchDiffStatus, number> = { added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 };
-  if (opts.scopeOnly) entries.forEach((e) => counts[e.status]++);
-  const summary = opts.scopeOnly ? counts : result.summary;
+  const counts = emptyCounts();
+  entries.forEach((e) => counts[e.status]++);
   out.push('## Summary', '', '| Status | Searches |', '| --- | ---: |');
-  for (const s of Object.keys(STATUS_LABEL) as SearchDiffStatus[]) out.push(`| ${STATUS_LABEL[s]} | ${summary[s]} |`);
+  for (const st of Object.keys(STATUS_LABEL) as SearchDiffStatus[]) out.push(`| ${STATUS_LABEL[st]} | ${counts[st]} |`);
   out.push('');
+
+  if (s && (s.unmatched.length || s.baseOnly.length)) {
+    out.push('## Scope rows to check', '');
+    for (const r of s.unmatched) out.push(`- Not found in either file: ${md(r.folder)} :: **${md(r.name)}**`);
+    for (const r of s.baseOnly) out.push(`- Found only under the base name or folder: ${md(r.folder)} :: **${md(r.name)}**`);
+    out.push('');
+  }
 
   if (result.folderMoves.length) {
     out.push('## Folder moves', '', '| From | To | Searches |', '| --- | --- | ---: |');
-    for (const m of result.folderMoves) out.push(`| ${esc(m.from)} | ${esc(m.to)} | ${m.searches} |`);
+    for (const m of result.folderMoves) out.push(`| ${md(m.from)} | ${md(m.to)} | ${m.searches} |`);
     out.push('');
   }
 
@@ -655,63 +863,78 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
   for (const e of entries) {
     if (e.status === 'unchanged') continue;
     const folder = entryRef(e).folder;
-    const c = changedFolders.get(folder) ?? { added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 };
+    const c = changedFolders.get(folder) ?? emptyCounts();
     c[e.status]++;
     changedFolders.set(folder, c);
   }
   if (changedFolders.size) {
     out.push('## Changed folders', '', '| Folder | Modified | Added | Removed | Moved | Renamed |', '| --- | ---: | ---: | ---: | ---: | ---: |');
     for (const [folder, c] of [...changedFolders].sort((a, b) => a[0].localeCompare(b[0]))) {
-      out.push(`| ${esc(folder || '(root)')} | ${c.modified} | ${c.added} | ${c.removed} | ${c.moved} | ${c.renamed} |`);
+      out.push(`| ${md(folder || '(root)')} | ${c.modified} | ${c.added} | ${c.removed} | ${c.moved} | ${c.renamed} |`);
     }
     out.push('');
   }
 
-  // Scope tags (e.g. dbt models) → changed searches they depend on
-  const byTag = new Map<string, SearchDiffEntry[]>();
+  // Scope tags (e.g. dbt models) → changed searches they use, directly or through dependencies
+  const byTag = new Map<string, { direct: Set<string>; upstream: Set<string> }>();
   for (const e of entries) {
-    if (e.status === 'unchanged') continue;
-    for (const t of e.scopeTags ?? []) byTag.set(t, [...(byTag.get(t) ?? []), e]);
+    for (const tag of e.scopeTags ?? []) {
+      const t = byTag.get(tag) ?? { direct: new Set<string>(), upstream: new Set<string>() };
+      if (e.status !== 'unchanged') t.direct.add(`${md(entryRef(e).name)} (${e.status})`);
+      for (const u of e.upstreamChanges ?? []) t.upstream.add(`${md(u.name)} (${u.status})`);
+      byTag.set(tag, t);
+    }
   }
-  if (byTag.size) {
-    out.push(`## Impact by ${result.scope?.label ?? 'scope'} tag`, '', '| Tag | Changed searches |', '| --- | --- |');
-    for (const [tag, es] of [...byTag].sort((a, b) => a[0].localeCompare(b[0]))) {
-      out.push(`| \`${esc(tag)}\` | ${es.map((e) => `${esc(entryRef(e).name)} (${e.status})`).join('<br>')} |`);
+  const impacted = [...byTag].filter(([, t]) => t.direct.size || t.upstream.size).sort((a, b) => a[0].localeCompare(b[0]));
+  if (impacted.length) {
+    out.push(`## Impact by ${md(s?.label ?? 'scope')} tag`, '', '| Tag | Changed searches it uses | Changed searches they depend on |', '| --- | --- | --- |');
+    for (const [tag, t] of impacted) {
+      out.push(`| ${code(tag)} | ${[...t.direct].join('<br>') || '—'} | ${[...t.upstream].join('<br>') || '—'} |`);
     }
     out.push('');
   }
 
-  const byStatus = (s: SearchDiffStatus) => entries.filter((e) => e.status === s);
-  const label = (e: SearchDiffEntry) => {
-    const r = (e.target ?? e.base)!;
-    const scope = e.scope ? ` _(in scope${e.scope === 'ancestor' ? ': parent' : ''}${e.scopeTags?.length ? `: ${e.scopeTags.join(', ')}` : ''})_` : '';
-    return `**${r.name}**${scope}`;
-  };
+  const byStatus = (st: SearchDiffStatus) => entries.filter((e) => e.status === st);
+  const scopeNote = (e: SearchDiffEntry) =>
+    e.scope ? ` _(in scope${e.scope === 'ancestor' ? ': dependency' : ''}${e.scopeTags?.length ? `: ${e.scopeTags.map(md).join(', ')}` : ''})_` : '';
   const listByFolder = (items: SearchDiffEntry[]) => {
-    let folder = '';
+    const dupNames = new Set(items.map((e) => entryRef(e)).filter((r, i, all) => all.findIndex((o) => o.folder === r.folder && o.name === r.name) !== i).map((r) => `${r.folder} :: ${r.name}`));
+    let folder: string | undefined;
     for (const e of items) {
-      const r = (e.target ?? e.base)!;
+      const r = entryRef(e);
       if (r.folder !== folder) {
         folder = r.folder;
-        out.push('', `#### ${folder}`, '');
+        out.push('', `#### ${md(folder || '(root)')}`, '');
       }
-      out.push(`- ${label(e)}${e.dependents ? ` — ${e.dependents} dependent searches` : ''}`);
+      const parent = dupNames.has(`${r.folder} :: ${r.name}`) && r.parent ? ` (parent: ${md(r.parent)})` : '';
+      out.push(`- **${md(r.name)}**${parent}${scopeNote(e)}${e.dependents ? `, ${plural(e.dependents, 'dependent search', 'dependent searches')}` : ''}`);
     }
     out.push('');
   };
 
-  for (const s of ['added', 'removed'] as const) {
-    const items = byStatus(s);
+  for (const st of ['added', 'removed'] as const) {
+    const items = byStatus(st);
     if (!items.length) continue;
-    out.push(`## ${STATUS_LABEL[s]} (${items.length})`);
+    out.push(`## ${STATUS_LABEL[st]} (${items.length})`);
     listByFolder(items);
   }
 
+  const fieldLine = (f: FieldChange) => `${FIELD_LABEL[f.field]} ${code(f.from ?? '—')} → ${code(f.to ?? '—')}`;
   const relocated = entries.filter((e) => e.status === 'moved' || e.status === 'renamed');
   if (relocated.length) {
     out.push(`## Moved or renamed, logic unchanged (${relocated.length})`, '');
     for (const e of relocated) {
-      out.push(`- ${label(e)}: ${e.fieldChanges.map((f) => `${f.field} \`${f.from}\` → \`${f.to}\``).join('; ')}`);
+      const how = e.matchedBy && e.matchedBy !== 'path' ? ` [matched by ${e.matchedBy}]` : '';
+      out.push(`- **${md(entryRef(e).name)}**${scopeNote(e)}${how}: ${e.fieldChanges.map(fieldLine).join('; ')}`);
+    }
+    out.push('');
+  }
+
+  const affected = entries.filter((e) => e.status === 'unchanged' && e.upstreamChanges?.length);
+  if (affected.length) {
+    out.push(`## Unchanged, but depend on a changed search (${affected.length})`, '');
+    for (const e of affected) {
+      out.push(`- **${md(entryRef(e).name)}**${scopeNote(e)}: ${e.upstreamChanges!.map((u) => `${md(u.name)} (${u.status})`).join('; ')}`);
     }
     out.push('');
   }
@@ -721,15 +944,15 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
     out.push(`## Modified (${modified.length})`, '');
     for (const e of modified) {
       const r = e.target!;
-      out.push(`### ${r.name}`, '', `Folder: ${r.folder}`);
-      if (e.scope) out.push(`Scope: ${e.scope}${e.scopeTags?.length ? ` — ${e.scopeTags.join(', ')}` : ''}`);
+      out.push(`### ${md(r.name)}`, '', `Folder: ${md(r.folder || '(root)')}`);
+      if (e.scope) out.push(`Scope: ${e.scope === 'direct' ? 'listed' : 'dependency'}${e.scopeTags?.length ? `, ${e.scopeTags.map(md).join(', ')}` : ''}`);
       if (e.matchedBy && e.matchedBy !== 'path') out.push(`Matched by: ${e.matchedBy}`);
       if (e.dependents) out.push(`Dependent searches: ${e.dependents}`);
       out.push('');
-      for (const f of e.fieldChanges) out.push(`- **${f.field}**: \`${f.from ?? '—'}\` → \`${f.to ?? '—'}\``);
-      for (const w of e.warnings) out.push(`- **Warning**: ${w}`);
+      for (const f of e.fieldChanges) out.push(`- **${FIELD_LABEL[f.field]}**: ${code(f.from ?? '—')} → ${code(f.to ?? '—')}`);
+      for (const w of e.warnings) out.push(`- **Warning**: ${md(w)}`);
       for (const g of groupCodeChanges(e)) {
-        out.push(`- **Codes — ${g.cluster}**: +${g.added.length} / −${g.removed.length}`);
+        out.push(`- **Codes, ${md(g.cluster)}**: +${g.added.length} / −${g.removed.length}`);
         const show = (sign: string, list: CodeRef[]) => {
           list.slice(0, maxCodes).forEach((c) => out.push(`  - ${sign} ${codeLine(c)}`));
           if (list.length > maxCodes) out.push(`  - ${sign} … ${list.length - maxCodes} more (see JSON)`);
@@ -737,9 +960,10 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
         show('+', g.added);
         show('−', g.removed);
       }
-      for (const c of e.codesChildrenChanged) out.push(`- **Include children** \`${c.code}\` ${c.displayName}: ${c.from} → ${c.to}`);
-      if (e.libraryItemsAdded.length) out.push(`- **Library items added**: ${e.libraryItemsAdded.map((x) => `\`${x}\``).join(', ')}`);
-      if (e.libraryItemsRemoved.length) out.push(`- **Library items removed**: ${e.libraryItemsRemoved.map((x) => `\`${x}\``).join(', ')}`);
+      for (const c of e.codesChildrenChanged) out.push(`- **Include children** ${code(c.code)} ${md(c.displayName)}: ${c.from} → ${c.to}`);
+      if (e.libraryItemsAdded.length) out.push(`- **Library items added**: ${e.libraryItemsAdded.map(code).join(', ')}`);
+      if (e.libraryItemsRemoved.length) out.push(`- **Library items removed**: ${e.libraryItemsRemoved.map(code).join(', ')}`);
+      if (e.upstreamChanges?.length) out.push(`- **Depends on changed searches**: ${e.upstreamChanges.map((u) => `${md(u.name)} (${u.status})`).join('; ')}`);
       if (e.guidePatch) out.push('', '```diff', e.guidePatch, '```');
       out.push('');
     }

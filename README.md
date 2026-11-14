@@ -74,18 +74,23 @@ Compare mode diffs two shared XML files and shows what changed per search: prope
 
 EMIS re-exports give every search, folder and parent a new GUID, so searches are matched on:
 
-1. Folder path (without the root folder) and name. Duplicates pair by parent search.
-2. Identical content (moved or renamed searches).
+1. Folder path (without the root folder) and name. Duplicates pair by parent and content.
+2. Identical content, when the folder (years normalised) or name is related.
 3. Shared criteria group IDs, which survive re-export.
-4. Unique name.
-5. Versioned replacements: same folder (years normalised) and name-token overlap of at least 0.5, or the same bracketed search ID ignoring version tokens (`[ICS_HTN_21 v3 FYYTD]` → `[ICS_HTN_21 v4_NICE FYYTD]`).
+4. Unique name and search type.
+5. Leftover duplicates: parent search via the matches so far, criteria group IDs, then code overlap of at least 0.5.
+6. Versioned replacements in the same folder (years normalised): the same bracketed search ID ignoring version tokens (`[ICS_HTN_21 v3 FYYTD]` → `[ICS_HTN_21 v4_NICE FYYTD]`), or name-token overlap of at least 0.5 plus a shared criterion or code. Tied candidates stay unmatched.
 
-An optional scope file limits the view to searches you depend on. It takes a JSON array of `{ "folder", "name" }` rows, or an object with a `searches` array whose rows may carry `models` or `tags`. Parents of in-scope searches are flagged too.
+Parent and population-criteria references are compared through these matches. References to searches outside both files produce a warning. Guide diffs map renamed searches' old names to new ones, so the diff shows logic changes only.
+
+An optional scope file limits the view to searches you depend on. It takes a JSON array of `{ "folder", "name" }` rows, or an object with a `searches` array whose rows may carry `models` or `tags`. Searches that in-scope ones depend on (parents and population criteria, transitively) are flagged, and unchanged in-scope searches that depend on a changed search are listed with those changes. Scope rows found in neither file, or only under their old name, are listed for follow-up.
 
 Downloads:
 
-- **JSON** (`schemaVersion` 1): every changed search plus unchanged in-scope searches, full code lists and guide patches.
-- **Markdown**: summary, changed folders, impact by scope tag, added/removed lists, and per-search changes with `diff` blocks.
+- **JSON** (`schemaVersion` 1): every search with its status; changed searches carry code lists, guide patches and, for added/removed searches, the full guide.
+- **Markdown**: summary, scope rows to check, folder moves, changed folders, impact by scope tag, added/removed lists, and per-search changes with `diff` blocks.
+
+`/api/xml-diff` keeps responses under 4 MB (Vercel's limit is 4.5 MB) by leaving out guides, then code lists, for added/removed searches. The command line has no limit.
 
 The same output is available from the command line:
 

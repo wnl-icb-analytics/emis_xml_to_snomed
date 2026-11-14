@@ -7,14 +7,17 @@ import { ArrowRight, Download, FileJson, GitCompare, Loader2, Search, Upload, X 
 import type { XmlBlobFileSummary } from '@/lib/blob-xml';
 import {
   entryRef,
+  FIELD_LABEL,
   groupCodeChanges,
   renderXmlDiffMarkdown,
   type CodeRef,
   type SearchDiffEntry,
   type SearchDiffStatus,
+  type UpstreamChange,
   type XmlDiffResult,
 } from '@/lib/xml-diff';
 import { slugifyFileName } from '@/lib/valueset-utils';
+import { downloadFile } from '@/lib/csv-utils';
 import { markdownComponents } from '@/components/implementation-guide-view';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,15 +45,6 @@ interface StoredScope {
 }
 
 
-function download(name: string, content: string, type: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function CompareMode() {
   const { toast } = useToast();
   const [files, setFiles] = useState<XmlBlobFileSummary[]>([]);
@@ -65,24 +59,34 @@ export default function CompareMode() {
   const [selected, setSelected] = useState<SearchDiffEntry | null>(null);
   const scopeInput = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const loadFiles = useCallback(() => {
     fetch('/api/xml-files')
       .then((r) => r.json())
       .then((d) => {
         const list: XmlBlobFileSummary[] = d.files ?? [];
         setFiles(list);
-        // Newest upload as target, next newest as base
-        if (list[0]) setTargetPath(list[0].pathname);
-        if (list[1]) setBasePath(list[1].pathname);
+        // Newest upload as target, next newest as base, unless already chosen
+        setTargetPath((p) => p || list[0]?.pathname || '');
+        setBasePath((p) => p || list[1]?.pathname || '');
       })
       .catch(() => toast({ variant: 'destructive', title: 'Shared files unavailable' }));
+  }, [toast]);
+
+  // Refresh after uploads from the sidebar
+  useEffect(() => {
+    loadFiles();
+    window.addEventListener('xml-parsed', loadFiles);
+    return () => window.removeEventListener('xml-parsed', loadFiles);
+  }, [loadFiles]);
+
+  useEffect(() => {
     try {
       const stored = localStorage.getItem(SCOPE_STORAGE_KEY);
       if (stored) setScope(JSON.parse(stored));
     } catch {
       /* ignore corrupt storage */
     }
-  }, [toast]);
+  }, []);
 
   const runDiff = useCallback(async () => {
     if (!basePath || !targetPath) return;
@@ -94,10 +98,19 @@ export default function CompareMode() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ basePathname: basePath, targetPathname: targetPath, scope: scope?.json, scopeLabel: scope?.label }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Diff failed');
+      const text = await res.text();
+      let data: { success?: boolean; error?: string; data?: XmlDiffResult };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(res.status === 413 ? 'The diff is too large to return' : `Server returned ${res.status} ${res.statusText}`.trim());
+      }
+      if (!res.ok || !data.success || !data.data) throw new Error(data.error || 'Diff failed');
       setResult(data.data);
       setScopeOnly(!!data.data.scope);
+      if (data.data.trimmed) {
+        toast({ title: 'Large diff trimmed', description: 'Guides or code lists for added/removed searches were left out. Use the CLI for the full output.' });
+      }
     } catch (error) {
       toast({ variant: 'destructive', title: 'Diff failed', description: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -127,7 +140,8 @@ export default function CompareMode() {
     if (!result) return [];
     const q = query.trim().toLowerCase();
     return result.entries.filter((e) => {
-      if (!statuses.has(e.status)) return false;
+      const affected = scopeOnly && e.status === 'unchanged' && !!e.upstreamChanges?.length;
+      if (!statuses.has(e.status) && !affected) return false;
       if (scopeOnly && !e.scope) return false;
       if (!q) return true;
       const hay = [e.base?.name, e.base?.folder, e.target?.name, e.target?.folder, ...(e.scopeTags ?? [])].join(' ').toLowerCase();
@@ -150,6 +164,9 @@ export default function CompareMode() {
       else next.add(s);
       return next;
     });
+
+  // Selection hidden by filters is cleared
+  const shown = selected && visible.includes(selected) ? selected : null;
 
   const baseName = result ? `${slugifyFileName(result.base.label)}__vs__${slugifyFileName(result.target.label)}` : 'diff';
 
@@ -216,15 +233,16 @@ export default function CompareMode() {
             <span className="text-muted-foreground">({result.target.searchCount})</span>
             {result.scope && (
               <span className="text-xs text-muted-foreground">
-                · scope {result.scope.label}: {result.scope.matched}/{result.scope.searches} found, +{result.scope.ancestors} parents
+                · scope {result.scope.label}: {result.scope.matched}/{result.scope.searches} found, {result.scope.ancestors} dependencies,{' '}
+                {result.scope.affectedUpstream} unchanged but affected upstream
               </span>
             )}
             <div className="ml-auto flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => download(`${baseName}.diff.json`, JSON.stringify(result, null, 2), 'application/json')}>
+              <Button variant="outline" size="sm" onClick={() => downloadFile(JSON.stringify(result, null, 2), `${baseName}.diff.json`, 'application/json')}>
                 <Download className="h-3.5 w-3.5 mr-1.5" />
                 JSON
               </Button>
-              <Button variant="outline" size="sm" onClick={() => download(`${baseName}.diff.md`, renderXmlDiffMarkdown(result), 'text/markdown;charset=utf-8')}>
+              <Button variant="outline" size="sm" onClick={() => downloadFile(renderXmlDiffMarkdown(result), `${baseName}.diff.md`, 'text/markdown;charset=utf-8')}>
                 <Download className="h-3.5 w-3.5 mr-1.5" />
                 Markdown
               </Button>
@@ -233,7 +251,7 @@ export default function CompareMode() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    download(`${baseName}.scope.diff.md`, renderXmlDiffMarkdown(result, { scopeOnly: true }), 'text/markdown;charset=utf-8')
+                    downloadFile(renderXmlDiffMarkdown(result, { scopeOnly: true }), `${baseName}.scope.diff.md`, 'text/markdown;charset=utf-8')
                   }
                 >
                   <Download className="h-3.5 w-3.5 mr-1.5" />
@@ -257,6 +275,33 @@ export default function CompareMode() {
               </button>
             ))}
           </div>
+
+          {result.trimmed && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              Large diff: guides for {result.trimmed.guides} and code lists for {result.trimmed.codeLists} added or removed searches were left
+              out. Run <code className="font-mono">scripts/diff-xml.ts</code> for the full output.
+            </div>
+          )}
+
+          {result.scope && (result.scope.unmatched.length > 0 || result.scope.baseOnly.length > 0) && (
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer">
+                Scope rows to check: {result.scope.unmatched.length} not found, {result.scope.baseOnly.length} found only under the base name
+              </summary>
+              <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                {result.scope.unmatched.map((r) => (
+                  <li key={`u${r.folder}${r.name}`}>
+                    Not found: {r.folder} :: <span className="text-foreground">{r.name}</span>
+                  </li>
+                ))}
+                {result.scope.baseOnly.map((r) => (
+                  <li key={`b${r.folder}${r.name}`}>
+                    Base only: {r.folder} :: <span className="text-foreground">{r.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {result.folderMoves.length > 0 && (
             <div className="text-xs text-muted-foreground space-y-0.5">
@@ -285,13 +330,20 @@ export default function CompareMode() {
           <div className="grid grid-cols-[minmax(320px,2fr)_5fr] gap-4">
             <Card className="overflow-hidden">
               <div className="h-[70vh] overflow-y-auto">
-                <EntryList entries={visible} selected={selected} onSelect={setSelected} />
+                <EntryList entries={visible} selected={shown} onSelect={setSelected} />
               </div>
             </Card>
             <Card className="overflow-hidden">
               <div className="h-[70vh] overflow-y-auto">
-                {selected ? (
-                  <EntryDetail entry={selected} />
+                {shown ? (
+                  <EntryDetail
+                    key={result.entries.indexOf(shown)}
+                    entry={shown}
+                    onSelectUpstream={(u) => {
+                      const hit = result.entries.find((x) => entryRef(x).folder === u.folder && entryRef(x).name === u.name);
+                      if (hit) setSelected(hit);
+                    }}
+                  />
                 ) : (
                   <div className="p-6 text-sm text-muted-foreground">Select a search to see what changed.</div>
                 )}
@@ -343,9 +395,13 @@ function EntryList({ entries, selected, onSelect }: { entries: SearchDiffEntry[]
               onClick={() => onSelect(e)}
               className={`w-full flex items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted/50 ${selected === e ? 'bg-muted' : ''}`}
             >
-              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${STATUS[e.status].dot}`} title={STATUS[e.status].label} />
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${STATUS[e.status].dot}`} title={STATUS[e.status].label} aria-hidden />
+              <span className="sr-only">{STATUS[e.status].label}:</span>
               <span className="min-w-0 flex-1">
                 <span className="block line-clamp-2 break-words">{r.name}</span>
+                {e.status === 'unchanged' && !!e.upstreamChanges?.length && (
+                  <span className="block truncate text-[11px] text-amber-600 dark:text-amber-400">depends on a changed search</span>
+                )}
                 {(e.moved || e.renamed) && e.status !== 'unchanged' && (
                   <span className="block truncate text-[11px] text-muted-foreground">
                     {e.renamed ? 'renamed' : ''}
@@ -359,7 +415,7 @@ function EntryList({ entries, selected, onSelect }: { entries: SearchDiffEntry[]
                   className={`shrink-0 rounded px-1 text-[10px] font-medium ${e.scope === 'direct' ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}
                   title={e.scopeTags?.join(', ')}
                 >
-                  {e.scope === 'direct' ? 'scope' : 'parent'}
+                  {e.scope === 'direct' ? 'scope' : 'dependency'}
                 </span>
               )}
             </button>
@@ -370,7 +426,7 @@ function EntryList({ entries, selected, onSelect }: { entries: SearchDiffEntry[]
   );
 }
 
-function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
+function EntryDetail({ entry: e, onSelectUpstream }: { entry: SearchDiffEntry; onSelectUpstream: (u: UpstreamChange) => void }) {
   const r = entryRef(e);
   const groups = groupCodeChanges(e);
   return (
@@ -380,7 +436,11 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
           <span className={`h-2.5 w-2.5 rounded-full ${STATUS[e.status].dot}`} />
           <span className={`text-xs font-medium uppercase tracking-wide ${STATUS[e.status].text}`}>{STATUS[e.status].label}</span>
           {e.matchedBy && e.matchedBy !== 'path' && <span className="text-xs text-muted-foreground">· matched by {e.matchedBy}</span>}
-          {e.dependents > 0 && <span className="text-xs text-muted-foreground">· {e.dependents} dependent searches</span>}
+          {e.dependents > 0 && (
+            <span className="text-xs text-muted-foreground">
+              · {e.dependents} dependent {e.dependents === 1 ? 'search' : 'searches'}
+            </span>
+          )}
         </div>
         <h3 className="mt-1 text-lg font-semibold">{r.name}</h3>
         <div className="text-xs text-muted-foreground">{r.folder}</div>
@@ -393,7 +453,7 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
             ))}
           </div>
         )}
-        {e.scope === 'ancestor' && <div className="mt-2 text-xs text-muted-foreground">Parent of an in-scope search.</div>}
+        {e.scope === 'ancestor' && <div className="mt-2 text-xs text-muted-foreground">An in-scope search depends on this one.</div>}
         {e.warnings.length > 0 && (
           <div className="mt-2 space-y-0.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
             {e.warnings.map((w) => (
@@ -416,7 +476,7 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
             <tbody>
               {e.fieldChanges.map((f) => (
                 <tr key={f.field} className="border-b border-border/50 align-top">
-                  <td className="py-1.5 pr-3 font-medium whitespace-nowrap">{f.field}</td>
+                  <td className="py-1.5 pr-3 font-medium whitespace-nowrap">{FIELD_LABEL[f.field]}</td>
                   <td className="py-1.5 pr-3 text-red-600 dark:text-red-400 line-through decoration-red-400/50">{f.from ?? '—'}</td>
                   <td className="py-1.5 text-emerald-600 dark:text-emerald-400">{f.to ?? '—'}</td>
                 </tr>
@@ -457,6 +517,26 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
         </Section>
       )}
 
+      {!!e.upstreamChanges?.length && (
+        <Section title="Depends on changed searches">
+          <div className="space-y-1">
+            {e.upstreamChanges.map((u) => (
+              <button
+                key={`${u.folder}${u.name}`}
+                type="button"
+                onClick={() => onSelectUpstream(u)}
+                className="flex w-full items-start gap-2 text-left text-xs hover:underline"
+              >
+                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${STATUS[u.status].dot}`} aria-hidden />
+                <span>
+                  {u.name} <span className="text-muted-foreground">({STATUS[u.status].label.toLowerCase()}, {u.folder})</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {e.guidePatch && (
         <Section title="Logic changes (implementation guide)">
           <GuidePatch patch={e.guidePatch} />
@@ -467,7 +547,14 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
         <div className="text-xs text-muted-foreground">Structural change with no visible effect on the guide or codes.</div>
       )}
 
-      {e.status === 'unchanged' && <div className="text-sm text-muted-foreground">No changes between the two files.</div>}
+      {e.status === 'unchanged' && <div className="text-sm text-muted-foreground">No changes to this search between the two files.</div>}
+
+      {e.codesOmitted !== undefined && (
+        <div className="text-xs text-muted-foreground">{e.codesOmitted} codes left out to keep the response small.</div>
+      )}
+      {e.guideOmitted && (
+        <div className="text-xs text-muted-foreground">Guide left out to keep the response small. Open the file in Explore mode to read it.</div>
+      )}
 
       {e.guide && (
         <Section title={e.status === 'added' ? 'New search' : 'Removed search'}>

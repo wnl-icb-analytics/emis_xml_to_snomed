@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { EmisReport, EmisXmlDocument } from './types';
-import { diffXmlDocuments, parseDiffScope, renderXmlDiffMarkdown, type DiffScopeInput } from './xml-diff';
+import { diffXmlDocuments, parseDiffScope, renderXmlDiffMarkdown, trimForTransport, type DiffScopeInput } from './xml-diff';
 
 // Synthetic searches. GUIDs are passed per side to mimic EMIS re-exports rotating them.
 interface Spec {
@@ -170,11 +170,11 @@ test('scope marks direct searches with tags and their parents as ancestors', () 
   assert.equal(parent.scope, 'ancestor');
   assert.equal(parent.status, 'unchanged'); // unchanged in-scope entries are kept
   assert.equal(r.entries.find((e) => e.target?.name === 'Unrelated')?.scope, undefined);
-  assert.deepEqual(r.scope, { label: 'dbt', searches: 1, matched: 1, ancestors: 1 });
+  assert.deepEqual(r.scope, { label: 'dbt', searches: 1, matched: 1, ancestors: 1, affectedUpstream: 0, unmatched: [], baseOnly: [] });
 
   const md = renderXmlDiffMarkdown(r, { scopeOnly: true });
   assert.match(md, /## Impact by dbt tag/);
-  assert.match(md, /`int_model_a` \| Child \(modified\)/);
+  assert.match(md, /\| `int_model_a` \| Child \(modified\) \| — \|/);
   assert.match(md, /```diff/);
 });
 
@@ -240,4 +240,100 @@ test('a parent resolved on one side only is a change', () => {
   const child = r.entries.find((e) => e.target?.name === 'Child')!;
   assert.equal(child.status, 'modified');
   assert.equal(child.fieldChanges[0].to, 'unknown search missing');
+});
+
+test('ambiguous duplicates without a parent pair by code overlap, not position', () => {
+  const r = run(
+    [
+      { guid: 'a1', folder: 'F', name: 'Dup', codes: ['1'] },
+      { guid: 'a2', folder: 'F', name: 'Dup', codes: ['2'] },
+      { guid: 'a3', folder: 'F', name: 'Dup', codes: ['3'] },
+    ],
+    [
+      { guid: 'b1', folder: 'F', name: 'Dup', codes: ['3', '9'] },
+      { guid: 'b2', folder: 'F', name: 'Dup', codes: ['1', '9'] },
+    ]
+  );
+  const modified = r.entries.filter((e) => e.status === 'modified');
+  assert.equal(modified.length, 2);
+  for (const e of modified) {
+    assert.deepEqual(e.codesAdded.map((c) => c.code), ['9']);
+    assert.equal(e.codesRemoved.length, 0);
+  }
+  assert.equal(r.summary.removed, 1);
+});
+
+test('identical content in an unrelated folder and name is not paired', () => {
+  const r = run(
+    [{ guid: 'a', folder: 'Old audits', name: 'Over 65s', groupId: 'g1' }],
+    [{ guid: 'b', folder: 'New audits', name: 'Smokers', groupId: 'g2' }]
+  );
+  assert.equal(r.summary.added, 1);
+  assert.equal(r.summary.removed, 1);
+});
+
+test('in-scope searches report changed parents and population criteria they depend on', () => {
+  const scope = parseDiffScope([{ folder: 'F', name: 'Model input', tags: ['int_x'] }], 'dbt');
+  const r = run(
+    [
+      { guid: 'reg', folder: 'F', name: 'HF Register', codes: ['1'] },
+      { guid: 'pop', folder: 'F', name: 'Exclusions', codes: ['5'] },
+      { guid: 'c', folder: 'F', name: 'Model input', parent: 'reg', popRefs: ['pop'] },
+    ],
+    [
+      { guid: 'reg2', folder: 'F', name: 'HF Register', codes: ['1', '2'] },
+      { guid: 'pop2', folder: 'F', name: 'Exclusions', codes: ['6'] },
+      { guid: 'd', folder: 'F', name: 'Model input', parent: 'reg2', popRefs: ['pop2'] },
+    ],
+    scope
+  );
+  const child = r.entries.find((e) => e.target?.name === 'Model input')!;
+  assert.equal(child.status, 'unchanged');
+  assert.deepEqual(child.upstreamChanges?.map((u) => u.name), ['Exclusions', 'HF Register']);
+  assert.equal(r.scope?.affectedUpstream, 1);
+  assert.equal(r.entries.find((e) => e.target?.name === 'HF Register')?.dependents, 1);
+  const md = renderXmlDiffMarkdown(r, { scopeOnly: true });
+  assert.match(md, /\| `int_x` \| — \| Exclusions \(modified\)<br>HF Register \(modified\) \|/);
+});
+
+test('scope rows found nowhere or only under the base name are listed', () => {
+  const scope = parseDiffScope([
+    { folder: 'F', name: 'Old name' },
+    { folder: 'F', name: 'Missing' },
+  ]);
+  const r = run([{ guid: 'a', folder: 'F', name: 'Old name' }], [{ guid: 'b', folder: 'G', name: 'Old name renamed' }], scope);
+  assert.deepEqual(r.scope?.unmatched, [{ folder: 'F', name: 'Missing' }]);
+  assert.deepEqual(r.scope?.baseOnly, [{ folder: 'F', name: 'Old name' }]);
+});
+
+test('markdown escapes search names', () => {
+  const r = run([{ guid: 'a', folder: 'F', name: '* No BP done', codes: ['1'] }], [{ guid: 'b', folder: 'F', name: '**Total of poor BP', codes: ['2'] }]);
+  const md = renderXmlDiffMarkdown(r);
+  assert.match(md, /\*\*\\\* No BP done\*\*/);
+  assert.match(md, /\*\*\\\*\\\*Total of poor BP\*\*/);
+});
+
+test('guide patch ignores renames and shows the logic change', () => {
+  const r = run(
+    [{ guid: 'a', folder: 'F', name: '[X_21 v3] Since Apr 25 controlled', codes: ['1'], groupId: 'g' }],
+    [{ guid: 'b', folder: 'F', name: '[X_21 v4] Since Apr 26 controlled', codes: ['1', '2'], groupId: 'g' }]
+  );
+  const [e] = r.entries;
+  assert.equal(e.status, 'modified');
+  assert.ok(e.guidePatch);
+  assert.ok(!e.guidePatch!.split('\n').some((l) => l.startsWith('-') && l.includes('Apr 25')), e.guidePatch);
+  assert.ok(!e.guidePatch!.includes('No newline'));
+});
+
+test('trimForTransport drops guides, then code lists, then refuses', () => {
+  const r = run([{ guid: 'a', folder: 'F', name: 'Gone', codes: ['1', '2', '3'] }], [{ guid: 'b', folder: 'G', name: 'New', codes: ['4'] }]);
+  const bytes = (x: unknown) => new TextEncoder().encode(JSON.stringify(x)).length;
+  const full = bytes(r);
+  const noGuides = trimForTransport(r, full - 1);
+  assert.ok(noGuides.entries.every((e) => !e.guide && e.guideOmitted));
+  assert.deepEqual(noGuides.trimmed, { guides: 2, codeLists: noGuides.trimmed!.codeLists });
+  const minimal = trimForTransport(r, bytes({ ...noGuides, entries: noGuides.entries.map((e) => ({ ...e, codesAdded: [], codesRemoved: [] })) }) + 200);
+  assert.ok(minimal.entries.every((e) => e.codesAdded.length === 0 && e.codesRemoved.length === 0));
+  assert.throws(() => trimForTransport(r, 100));
+  assert.equal(trimForTransport(r, full + 1), r);
 });

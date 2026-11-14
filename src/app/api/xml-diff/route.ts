@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadXmlBlobContent, XML_BLOB_PREFIX } from '@/lib/blob-xml';
 import { parseEmisXml } from '@/lib/xml-parser';
-import { diffXmlDocuments, parseDiffScope } from '@/lib/xml-diff';
+import { diffXmlDocuments, parseDiffScope, trimForTransport } from '@/lib/xml-diff';
+
+/** Below Vercel's 4.5 MB serverless response limit, leaving room for headers */
+const MAX_RESPONSE_BYTES = 4_000_000;
 
 const badRequest = (error: string) => NextResponse.json({ success: false, error }, { status: 400 });
 
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
         return { fileName, doc: await parseEmisXml(xmlContent) };
       })
     );
-    return NextResponse.json({ success: true, data: diffXmlDocuments(base, target, { scope }) });
+    return NextResponse.json({ success: true, data: trimForTransport(diffXmlDocuments(base, target, { scope }), MAX_RESPONSE_BYTES) });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to diff XML files' },
