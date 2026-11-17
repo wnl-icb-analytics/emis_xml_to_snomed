@@ -326,11 +326,12 @@ export function getCriterionDisplayData(criterion: SearchCriterion): CriterionDi
     if (cf.valueSets?.length) {
       const isEnum = cf.valueSets.every((vs) => vs.codeSystem?.toUpperCase() === 'EMISINTERNAL');
       const simpleEnum = isEnum && cf.valueSets.length === 1 && !cf.valueSets[0].isAllValuesExcept;
+      const enumValues = (vs: EmisValueSet) => vs.values.map((value) => value.displayName || prettifyEnumValue(value.code)).join(', ');
       filters.push({
         label: simpleEnum ? `${name}${op === 'NOTIN' ? ' not in' : ''}:` : name,
         value: simpleEnum
-          ? cf.valueSets.flatMap((vs) => vs.values.map((value) => value.displayName || prettifyEnumValue(value.code))).join(', ')
-          : formatValueSetCondition(cf.valueSets, op === 'NOTIN', (vs) => vs.description || formatValueSetPreview(vs)),
+          ? cf.valueSets.map(enumValues).join(', ')
+          : formatValueSetCondition(cf.valueSets, op === 'NOTIN', (vs) => (isEnum ? enumValues(vs) : vs.description || formatValueSetPreview(vs))),
         valueSets: isEnum ? undefined : cf.valueSets,
       });
       continue;

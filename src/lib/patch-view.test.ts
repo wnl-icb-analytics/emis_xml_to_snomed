@@ -23,7 +23,7 @@ test('similar removed/added lines become one edited line with word-level parts',
   assert.ok(change.kind === 'change');
   assert.deepEqual(
     change.parts.filter((p) => p.op !== 'eq').map((p) => [p.op, p.text]),
-    [['del', '01/04/2025'], ['add', '01/04/2026'], ['del', '01/04/2025'], ['add', '01/04/2026']]
+    [['del', '2025'], ['add', '2026'], ['del', '2025'], ['add', '2026']]
   );
   assert.deepEqual(second.rows.map((r) => r.kind), ['change', 'add']);
 });
@@ -58,4 +58,22 @@ test('summary counts each edit once per line and orders by frequency', () => {
   assert.equal(s.changed, 3);
   assert.equal(s.added, 1);
   assert.deepEqual(s.sections, ['Rule 1 of 2 — Exclusion · Criterion B', 'Rule 2 of 2 — Exclusion']);
+});
+
+test('display diffs mark only the edited digits or letters', () => {
+  const edits = (a: string, b: string) =>
+    diffLineWords(a, b, true)
+      .parts.filter((p) => p.op !== 'eq')
+      .map((p) => `${p.op}:${p.text}`);
+  assert.deepEqual(edits('[rICS_HTN_21NOBPAPR25] NO record of BP Since Apr2025', '[rICS_HTN_21NOBPAPR26] NO record of BP Since Apr2026'), [
+    'del:25',
+    'add:26',
+    'del:2025',
+    'add:2026',
+  ]);
+  // The "-" between two edits joins them into one
+  assert.deepEqual(edits('Call & Recall > [CR1] 2025-26 PCN Outcome', 'Call & Recall > [CR1] 2026-27 PCN Outcome'), ['del:2025-26', 'add:2026-27']);
+  assert.deepEqual(edits('numeric value >= 1 AND <= 90', 'numeric value >= 1 AND < 90'), ['del:<=', 'add:<']);
+  // Unrelated values are replaced whole rather than split into fragments
+  assert.deepEqual(edits('Asthma register', 'Frailty audit'), ['del:Asthma register', 'add:Frailty audit']);
 });
