@@ -515,7 +515,7 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
             {codesOnly && (
               <p className="text-sm text-muted-foreground">Rules and criteria are identical; only the codes inside a code list changed.</p>
             )}
-            {e.rules && <RuleDiffView rules={e.rules} plain={whole} lists={details} childrenChanged={e.codesChildrenChanged} />}
+            {e.rules && <RuleDiffView rules={e.rules} plain={whole} lists={details} />}
             {e.rulesOmitted && <p className="text-sm text-muted-foreground">Rules left out to keep the response small. See the implementation guide tab.</p>}
             {otherLists.length > 0 && (
               <Card className="shadow-sm">

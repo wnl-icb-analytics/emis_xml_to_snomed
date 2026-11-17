@@ -387,7 +387,7 @@ function codeNotes(e: SearchDiffEntry, listWhere: Map<string, Set<string>>): Cod
   return codeListDetails(e).map((list) => ({
     list,
     where: [...(listWhere.get(`${list.name}\u0000${list.cluster ?? ''}`) ?? [])],
-    childrenChanged: e.codesChildrenChanged.filter((c) => c.list === list.name),
+    childrenChanged: list.childrenChanged,
   }));
 }
 
@@ -557,7 +557,9 @@ export function buildPatchNotes(result: XmlDiffResult, opts: { scopeOnly?: boole
   const removed = new Map<string, SearchNote[]>();
   for (const e of entries.filter((x) => x.status === 'removed')) {
     const f = entryRef(e).folder;
-    removed.set(f, [...(removed.get(f) ?? []), wholeNote(e)]);
+    const n = wholeNote(e);
+    if (n.rulesOmitted) n.tags.push('rules left out for size');
+    removed.set(f, [...(removed.get(f) ?? []), n]);
   }
   return {
     title: `${result.base.label} → ${result.target.label}`,

@@ -114,7 +114,8 @@ export interface SearchDiffEntry {
   /** Codes in both versions of a changed list; with codesAdded/codesRemoved they rebuild either side for expansion */
   codesKept: CodeRef[];
   /** Same code in both, but includeChildren differs */
-  codesChildrenChanged: Array<{ code: string; displayName: string; from: boolean; to: boolean; list?: string }>;
+  /** `list` and `cluster` identify the code list; names are shared by lists with identical codes */
+  codesChildrenChanged: Array<{ code: string; displayName: string; from: boolean; to: boolean; list?: string; cluster?: string | null }>;
   libraryItemsAdded: string[];
   libraryItemsRemoved: string[];
   /** Rules and criteria as in the Explore rules view, each marked added, removed, changed or unchanged; all added or removed for added/removed searches */
@@ -423,7 +424,7 @@ function diffCodeLists(b: EmisReport, t: EmisReport) {
     for (const [k, c] of bl.codes) {
       const o = tl.codes.get(k);
       if (o && !c.excluded && o.includeChildren !== c.includeChildren) {
-        children.push({ code: c.code, displayName: c.displayName, from: c.includeChildren, to: o.includeChildren, list: tl.name });
+        children.push({ code: c.code, displayName: c.displayName, from: c.includeChildren, to: o.includeChildren, list: tl.name, cluster: tl.cluster });
         flipped++;
       }
     }
@@ -1209,7 +1210,8 @@ export function codeListDetails(e: SearchDiffEntry): CodeListDetail[] {
     codesAdded: [],
     codesRemoved: [],
     codesKept: [],
-    childrenChanged: e.codesChildrenChanged.filter((c) => c.list === l.name),
+    // Results saved before `cluster` was recorded match on name alone
+    childrenChanged: e.codesChildrenChanged.filter((c) => c.list === l.name && (c.cluster === undefined || c.cluster === l.cluster)),
     ...(e.codesKeptOmitted ? { keptOmitted: true } : {}),
   }));
   const find = (c: CodeRef) => {

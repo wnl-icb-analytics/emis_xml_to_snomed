@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { EmisReport, EmisXmlDocument } from './types';
-import { diffXmlDocuments, parseDiffScope, renderXmlDiffMarkdown, trimForTransport, type DiffScopeInput } from './xml-diff';
+import { codeListDetails, diffXmlDocuments, parseDiffScope, renderXmlDiffMarkdown, trimForTransport, type DiffScopeInput, type SearchDiffEntry } from './xml-diff';
 
 // Synthetic searches. GUIDs are passed per side to mimic EMIS re-exports rotating them.
 interface Spec {
@@ -430,4 +430,18 @@ test('unscoped output counts unchanged dependants of a changed search without li
   assert.equal(child.upstreamChanges, undefined);
   assert.equal(r.affected, 1);
   assert.match(renderXmlDiffMarkdown(r), /^1 unchanged search depends on a modified, added or removed search\.$/m);
+});
+
+test('include-children changes stay with their list when two lists share a name', () => {
+  const list = (cluster: string) => ({ status: 'changed' as const, name: 'L1', cluster, codeSystem: 'SNOMED', from: 1, to: 1, added: 0, removed: 0, summary: '' });
+  const entry = {
+    codeLists: [list('AAA_COD'), list('BBB_COD')],
+    codesAdded: [],
+    codesRemoved: [],
+    codesKept: [],
+    codesChildrenChanged: [{ code: '1', displayName: 'One', from: false, to: true, list: 'L1', cluster: 'BBB_COD' }],
+  } as unknown as SearchDiffEntry;
+  const [a, b] = codeListDetails(entry);
+  assert.equal(a.childrenChanged.length, 0);
+  assert.equal(b.childrenChanged.length, 1);
 });

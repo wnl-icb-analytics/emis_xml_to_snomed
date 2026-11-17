@@ -109,3 +109,10 @@ test('rules left out for size are reported, not shown as an empty search', () =>
   assert.match(md, /Rules left out to keep the response small/);
   assert.doesNotMatch(md, /No rules of its own/);
 });
+
+test('removed searches note rules left out for size', () => {
+  const trimmed = { ...result, entries: result.entries.map((e) => ({ ...e, status: 'removed' as const, rules: undefined, rulesOmitted: true })) };
+  const notes = buildPatchNotes(trimmed);
+  assert.ok(notes.removed[0].searches[0].tags.includes('rules left out for size'));
+  assert.match(renderPatchNotesMarkdown(notes), /rules left out for size/);
+});

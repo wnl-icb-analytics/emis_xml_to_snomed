@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ChevronDown, ChevronRight, ChevronUp, CornerDownRight, Filter, Link as LinkIcon, TriangleAlert, Users } from 'lucide-react';
 import type { ListRef, NodeStatus, RuleDiff } from '@/lib/rule-diff';
 import { changeStarts, outlineRule, type OutlineMode, type OutlineRow } from '@/lib/rule-outline';
-import type { CodeListDetail, SearchDiffEntry } from '@/lib/xml-diff';
+import type { CodeListDetail } from '@/lib/xml-diff';
 import { diffLineWords } from '@/lib/patch-view';
 import { codeSystemLabel } from '@/lib/agent-report-utils';
 import { useCompare } from '@/contexts/CompareContext';
@@ -18,9 +18,8 @@ import { cn } from '@/lib/utils';
 
 interface ListDetails {
   byKey: Map<string, CodeListDetail>;
-  children: SearchDiffEntry['codesChildrenChanged'];
 }
-const ListDetailsContext = createContext<ListDetails>({ byKey: new Map(), children: [] });
+const ListDetailsContext = createContext<ListDetails>({ byKey: new Map() });
 /** Plain: a whole new or removed search, drawn without change marks */
 const PlainContext = createContext(false);
 
@@ -41,9 +40,9 @@ function RowText({ row, plain }: { row: OutlineRow; plain: boolean }) {
 /** Inline code list button; opens the list's summary and codes under the row */
 function ListButton({ list, open, onToggle }: { list: ListRef; open: boolean; onToggle: () => void }) {
   const plain = useContext(PlainContext);
-  const { byKey, children } = useContext(ListDetailsContext);
+  const { byKey } = useContext(ListDetailsContext);
   const detail = byKey.get(listKey(list.name, list.cluster));
-  const flips = detail ? children.filter((c) => c.list === detail.name).length : 0;
+  const flips = detail?.childrenChanged.length ?? 0;
   const canOpen = !!detail && (hasCodesToShow(detail, flips) || !plain);
   return (
     <button
@@ -74,10 +73,10 @@ function ListButton({ list, open, onToggle }: { list: ListRef; open: boolean; on
 
 function ListPanel({ list }: { list: ListRef }) {
   const plain = useContext(PlainContext);
-  const { byKey, children } = useContext(ListDetailsContext);
+  const { byKey } = useContext(ListDetailsContext);
   const detail = byKey.get(listKey(list.name, list.cluster));
   if (!detail) return null;
-  const flips = children.filter((c) => c.list === detail.name);
+  const flips = detail.childrenChanged;
   return (
     <div className="space-y-1.5 rounded-md border bg-card p-2">
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -358,19 +357,17 @@ export function RuleDiffView({
   rules,
   plain = false,
   lists = [],
-  childrenChanged = [],
 }: {
   rules: RuleDiff[];
   plain?: boolean;
   /** Code list changes, opened in place from the rows that use them */
   lists?: CodeListDetail[];
-  childrenChanged?: SearchDiffEntry['codesChildrenChanged'];
 }) {
   const [mode, setMode] = useState<OutlineMode>(plain ? 'full' : 'changes');
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const details = useMemo<ListDetails>(
-    () => ({ byKey: new Map(lists.map((l) => [listKey(l.name, l.cluster), l])), children: childrenChanged }),
-    [lists, childrenChanged]
+    () => ({ byKey: new Map(lists.map((l) => [listKey(l.name, l.cluster), l])) }),
+    [lists]
   );
   const total = rules.filter((r) => r.kind === 'rule' && (plain || r.status !== 'removed')).length;
 

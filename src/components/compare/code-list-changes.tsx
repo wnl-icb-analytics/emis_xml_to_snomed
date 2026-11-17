@@ -285,7 +285,7 @@ export function CodeListChanges({ entry, exclude }: { entry: SearchDiffEntry; ex
   return (
     <div className="space-y-2">
       {lists.map((l) => (
-        <CodeListRow key={`${l.status}${l.name}${l.cluster}`} list={l} childrenChanged={entry.codesChildrenChanged.filter((c) => c.list === l.name)} />
+        <CodeListRow key={`${l.status}${l.name}${l.cluster}`} list={l} childrenChanged={l.childrenChanged} />
       ))}
     </div>
   );
