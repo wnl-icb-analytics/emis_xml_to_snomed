@@ -6,12 +6,12 @@
  * GUID references (parents, population criteria) are compared through the match
  * map, never by raw value.
  */
-import { structuredPatch } from 'diff';
+import { diffArrays } from 'diff';
 import type { EmisReport, EmisXmlDocument, SearchCriterion } from './types';
-import { buildImplementationGuideMarkdown } from './agent-report-utils';
-import { generateValueSetFriendlyName } from './valueset-utils';
+import { buildFriendlyNameMap, buildImplementationGuideMarkdown, codeSystemLabel } from './agent-report-utils';
+import { summarizeGuidePatch, type RepeatedEdit } from './patch-view';
 
-export const XML_DIFF_SCHEMA_VERSION = '1';
+export const XML_DIFF_SCHEMA_VERSION = '2';
 
 export type SearchDiffStatus = 'added' | 'removed' | 'modified' | 'moved' | 'renamed' | 'unchanged';
 export type MatchMethod = 'path' | 'content' | 'stable-ids' | 'name' | 'similar-name' | 'codes';
@@ -22,6 +22,8 @@ export type ScopeRelation = 'direct' | 'ancestor';
 const SIMILAR_NAME_THRESHOLD = 0.5;
 /** Minimum code overlap (intersection / union) to pair ambiguous duplicate searches */
 const DUPLICATE_CODE_THRESHOLD = 0.5;
+/** Minimum code overlap (intersection / union) to pair code lists without a shared cluster ID */
+const LIST_CODE_THRESHOLD = 0.5;
 
 export const MATCHING_DESCRIPTION =
   'Folder + name (duplicates by parent and content); then identical content with a related folder or name; ' +
@@ -45,6 +47,29 @@ export interface CodeRef {
   isRefset: boolean;
   /** True for an exception (excluded code) */
   excluded: boolean;
+  /** Code list (valueset_friendly_name) the code belongs to; newer name when the list was renumbered */
+  list?: string;
+}
+
+/** A code list (ValueSet) that was added, removed or edited within a matched search */
+export interface CodeListChange {
+  status: 'added' | 'removed' | 'changed';
+  /** valueset_friendly_name; newer side, or older side for removed lists */
+  name: string;
+  /** Older name when the list was renumbered */
+  previousName?: string;
+  cluster: string | null;
+  previousCluster?: string | null;
+  /** Display label, e.g. "SNOMED", "Drug Group" */
+  codeSystem: string;
+  previousCodeSystem?: string;
+  /** Included codes (incl. refset IDs) before and after */
+  from: number;
+  to: number;
+  added: number;
+  removed: number;
+  /** Plain-English description, e.g. "Replaced 521 listed codes with refset 12463601000001108" */
+  summary: string;
 }
 
 export type FieldName = 'name' | 'folder' | 'description' | 'parent' | 'reportType' | 'populationCriteria';
@@ -79,10 +104,12 @@ export interface SearchDiffEntry {
   renamed: boolean;
   contentChanged: boolean;
   fieldChanges: FieldChange[];
+  /** Matched searches: code lists added, removed or edited */
+  codeLists: CodeListChange[];
   codesAdded: CodeRef[];
   codesRemoved: CodeRef[];
   /** Same code in both, but includeChildren differs */
-  codesChildrenChanged: Array<{ code: string; displayName: string; from: boolean; to: boolean }>;
+  codesChildrenChanged: Array<{ code: string; displayName: string; from: boolean; to: boolean; list?: string }>;
   libraryItemsAdded: string[];
   libraryItemsRemoved: string[];
   /** Unified diff of the implementation guide text (rule logic in plain English) */
@@ -100,7 +127,7 @@ export interface SearchDiffEntry {
   scope?: ScopeRelation;
   /** Labels from the scope list, e.g. dbt model names */
   scopeTags?: string[];
-  /** In-scope searches only: changed searches they depend on through parents or population criteria */
+  /** Changed and in-scope searches: modified, added or removed searches they depend on through parents or population criteria, transitively */
   upstreamChanges?: UpstreamChange[];
 }
 
@@ -152,6 +179,8 @@ export interface XmlDiffResult {
   base: DiffSideInfo;
   target: DiffSideInfo;
   summary: Record<SearchDiffStatus, number>;
+  /** Unchanged searches that depend on a modified, added or removed search; only in-scope ones list them in upstreamChanges */
+  affected: number;
   folders: FolderSummary[];
   folderMoves: FolderMove[];
   scope?: DiffScopeSummary;
@@ -215,33 +244,192 @@ function evidenceOf(r: EmisReport): Set<string> {
 
 const codeSet = (r: EmisReport) => new Set(r.valueSets.flatMap((vs) => vs.values.map((v) => v.code)));
 
-function collectCodes(r: EmisReport): Map<string, CodeRef> {
-  const out = new Map<string, CodeRef>();
+interface CodeList {
+  name: string;
+  cluster: string | null;
+  codeSystem: string;
+  /** Keyed by included/excluded + code */
+  codes: Map<string, CodeRef>;
+  /** Sorted code keys, for exact-content matching */
+  content: string;
+}
+
+/**
+ * Code lists of a search. Names follow the guide (`valueset_friendly_name`), so lists with
+ * identical codes share a name; they stay separate here when their cluster or code system differs.
+ */
+function codeListsOf(r: EmisReport): CodeList[] {
+  const names = buildFriendlyNameMap(r);
+  const out = new Map<string, CodeList>();
   for (const vs of r.valueSets) {
+    const name = names.get(vs.id) ?? vs.id;
     const cluster = vs.description || null;
     const codeSystem = vs.codeSystem || 'UNKNOWN';
+    const id = `${name}\u0000${cluster ?? ''}\u0000${codeSystem}`;
+    let l = out.get(id);
+    if (!l) out.set(id, (l = { name, cluster, codeSystem, codes: new Map(), content: '' }));
+    const base = { codeSystem, cluster, list: name };
     for (const v of vs.values) {
-      const key = `i|${cluster ?? ''}|${codeSystem}|${v.code}`;
-      if (!out.has(key)) {
-        out.set(key, {
-          code: v.code,
-          displayName: v.displayName && v.displayName !== v.code ? v.displayName : '',
-          codeSystem,
-          cluster,
-          includeChildren: v.includeChildren,
-          isRefset: !!v.isRefset,
-          excluded: false,
-        });
+      const displayName = v.displayName && v.displayName !== v.code ? v.displayName : '';
+      if (!l.codes.has(`i|${v.code}`)) {
+        l.codes.set(`i|${v.code}`, { ...base, code: v.code, displayName, includeChildren: v.includeChildren, isRefset: !!v.isRefset, excluded: false });
       }
     }
     for (const e of vs.exceptions) {
-      const key = `x|${cluster ?? ''}|${codeSystem}|${e.code}`;
-      if (!out.has(key)) {
-        out.set(key, { code: e.code, displayName: e.displayName || '', codeSystem, cluster, includeChildren: false, isRefset: false, excluded: true });
+      if (!l.codes.has(`x|${e.code}`)) {
+        l.codes.set(`x|${e.code}`, { ...base, code: e.code, displayName: e.displayName || '', includeChildren: false, isRefset: false, excluded: true });
       }
     }
   }
-  return out;
+  for (const l of out.values()) l.content = [...l.codes.keys()].sort().join(',');
+  return [...out.values()];
+}
+
+/** Codes of an added or removed search; list names are left out to keep the response small */
+const wholeSearchCodes = (r: EmisReport): CodeRef[] => codeListsOf(r).flatMap((l) => [...l.codes.values()].map(({ list: _list, ...c }) => c));
+
+/** Pairs code lists: same content, then cluster ID, then code overlap. Numbering (vsN) is ignored. */
+function pairCodeLists(bl: CodeList[], tl: CodeList[]) {
+  const pairs: Array<[CodeList, CodeList]> = [];
+  const openB = new Set(bl);
+  const openT = new Set(tl);
+  const link = (b: CodeList, t: CodeList) => {
+    pairs.push([b, t]);
+    openB.delete(b);
+    openT.delete(t);
+  };
+  const pass = (key: (l: CodeList) => string) => {
+    const index = (ls: Set<CodeList>) => {
+      const m = new Map<string, CodeList | null>();
+      for (const l of ls) {
+        const k = key(l);
+        if (k) m.set(k, m.has(k) ? null : l);
+      }
+      return m;
+    };
+    const it = index(openT);
+    for (const [k, b] of index(openB)) {
+      const t = it.get(k);
+      if (b && t) link(b, t);
+    }
+  };
+  pass((l) => `${l.cluster ?? ''}\u0000${l.codeSystem}\u0000${l.content}`);
+  pass((l) => `${l.codeSystem}\u0000${l.content}`);
+  pass((l) => (l.cluster ? `${l.cluster}\u0000${l.codeSystem}` : ''));
+  pass((l) => l.cluster ?? '');
+  const scored: Array<{ b: CodeList; t: CodeList; score: number }> = [];
+  for (const b of openB) {
+    for (const t of openT) {
+      if (b.codeSystem !== t.codeSystem) continue;
+      const score = jaccard(new Set(b.codes.keys()), new Set(t.codes.keys()));
+      if (score >= LIST_CODE_THRESHOLD) scored.push({ b, t, score });
+    }
+  }
+  scored.sort((x, y) => y.score - x.score || x.b.name.localeCompare(y.b.name) || x.t.name.localeCompare(y.t.name));
+  for (const { b, t } of scored) if (openB.has(b) && openT.has(t)) link(b, t);
+  return { pairs, removed: [...openB], added: [...openT] };
+}
+
+const clip = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** "refset 999…", "3 refsets" or "19 codes (Mild frailty, CSHA … +17 more)" */
+function describeCodes(codes: CodeRef[], preview = true, noun: [string, string] = ['code', 'codes']): string {
+  if (!codes.length) return `no ${noun[1]}`;
+  if (codes.every((c) => c.isRefset)) return codes.length === 1 ? `refset ${codes[0].code}` : `${codes.length} refsets`;
+  const names = [...new Set(codes.map((c) => c.displayName).filter(Boolean))];
+  const more = names.length > 2 ? ` +${names.length - 2} more` : '';
+  const shown = preview && names.length ? ` (${names.slice(0, 2).map((n) => clip(n, names.length === 1 ? 90 : 40)).join(', ')}${more})` : '';
+  return `${plural(codes.length, noun[0], noun[1])}${shown}`;
+}
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function describeListChange(b: CodeList, t: CodeList, added: CodeRef[], removed: CodeRef[], children: number): string {
+  const inc = (cs: CodeRef[]) => cs.filter((c) => !c.excluded);
+  const exc = (cs: CodeRef[]) => cs.filter((c) => c.excluded);
+  const [bInc, tInc] = [inc([...b.codes.values()]), inc([...t.codes.values()])];
+  const [aInc, rInc] = [inc(added), inc(removed)];
+  const parts: string[] = [];
+  if (bInc.length && tInc.length && rInc.length === bInc.length && aInc.length === tInc.length) {
+    parts.push(`replaced ${describeCodes(bInc, false)} with ${describeCodes(tInc)}`);
+  } else {
+    if (aInc.length) parts.push(`added ${describeCodes(aInc)}`);
+    if (rInc.length) parts.push(`removed ${describeCodes(rInc)}`);
+  }
+  const exception: [string, string] = ['exception', 'exceptions'];
+  if (exc(added).length) parts.push(`added ${describeCodes(exc(added), true, exception)}`);
+  if (exc(removed).length) parts.push(`removed ${describeCodes(exc(removed), true, exception)}`);
+  if (children) parts.push(`include-children changed on ${plural(children, 'code', 'codes')}`);
+  if ((b.cluster ?? '') !== (t.cluster ?? '')) parts.push(`cluster ${b.cluster ?? 'none'} → ${t.cluster ?? 'none'}`);
+  if (b.codeSystem !== t.codeSystem) parts.push(`code system ${codeSystemLabel(b.codeSystem)} → ${codeSystemLabel(t.codeSystem)}`);
+  return capitalise(parts.join('; '));
+}
+
+/** Code list changes between two matched searches, plus a base → target list-name map for the guide patch */
+function diffCodeLists(b: EmisReport, t: EmisReport) {
+  const { pairs, removed: gone, added: fresh } = pairCodeLists(codeListsOf(b), codeListsOf(t));
+  const lists: CodeListChange[] = [];
+  const codesAdded: CodeRef[] = [];
+  const codesRemoved: CodeRef[] = [];
+  const children: SearchDiffEntry['codesChildrenChanged'] = [];
+  const names = new Map<string, Set<string>>();
+
+  for (const [bl, tl] of pairs) {
+    names.set(bl.name, (names.get(bl.name) ?? new Set()).add(tl.name));
+    const added = [...tl.codes].filter(([k]) => !bl.codes.has(k)).map(([, c]) => c);
+    const removed = [...bl.codes].filter(([k]) => !tl.codes.has(k)).map(([, c]) => ({ ...c, list: tl.name }));
+    let flipped = 0;
+    for (const [k, c] of bl.codes) {
+      const o = tl.codes.get(k);
+      if (o && !c.excluded && o.includeChildren !== c.includeChildren) {
+        children.push({ code: c.code, displayName: c.displayName, from: c.includeChildren, to: o.includeChildren, list: tl.name });
+        flipped++;
+      }
+    }
+    const sameMeta = (bl.cluster ?? '') === (tl.cluster ?? '') && bl.codeSystem === tl.codeSystem;
+    if (!added.length && !removed.length && !flipped && sameMeta) continue;
+    codesAdded.push(...added);
+    codesRemoved.push(...removed);
+    const included = (l: CodeList) => [...l.codes.values()].filter((c) => !c.excluded).length;
+    lists.push({
+      status: 'changed',
+      name: tl.name,
+      ...(bl.name !== tl.name ? { previousName: bl.name } : {}),
+      cluster: tl.cluster,
+      ...((bl.cluster ?? '') !== (tl.cluster ?? '') ? { previousCluster: bl.cluster } : {}),
+      codeSystem: codeSystemLabel(tl.codeSystem),
+      ...(bl.codeSystem !== tl.codeSystem ? { previousCodeSystem: codeSystemLabel(bl.codeSystem) } : {}),
+      from: included(bl),
+      to: included(tl),
+      added: added.filter((c) => !c.excluded).length,
+      removed: removed.filter((c) => !c.excluded).length,
+      summary: describeListChange(bl, tl, added, removed, flipped),
+    });
+  }
+  for (const [status, ls] of [['added', fresh], ['removed', gone]] as const) {
+    for (const l of ls) {
+      const codes = [...l.codes.values()];
+      const inc = codes.filter((c) => !c.excluded);
+      (status === 'added' ? codesAdded : codesRemoved).push(...codes);
+      lists.push({
+        status,
+        name: l.name,
+        cluster: l.cluster,
+        codeSystem: codeSystemLabel(l.codeSystem),
+        from: status === 'added' ? 0 : inc.length,
+        to: status === 'added' ? inc.length : 0,
+        added: status === 'added' ? inc.length : 0,
+        removed: status === 'removed' ? inc.length : 0,
+        summary: capitalise(describeCodes(inc)),
+      });
+    }
+  }
+  const order = { changed: 0, added: 1, removed: 2 };
+  lists.sort((x, y) => order[x.status] - order[y.status] || (x.cluster ?? '\uffff').localeCompare(y.cluster ?? '\uffff') || x.name.localeCompare(y.name));
+  // A base name paired with more than one target name is ambiguous; leave it as it is
+  const listRenames = new Map<string, string>();
+  for (const [from, to] of names) if (to.size === 1 && !to.has(from)) listRenames.set(from, [...to][0]);
+  return { lists, codesAdded, codesRemoved, children, listRenames };
 }
 
 const libraryItems = (r: EmisReport) => new Set((r.criteriaGroups ?? []).flatMap((g) => g.libraryItemRefs ?? []));
@@ -272,7 +460,6 @@ const namesRelated = (a: EmisReport, b: EmisReport) => {
 /** Folder with financial years normalised, so "2025-26 Outcome" and "2026-27 Outcome" compare equal */
 const normFolder = (r: EmisReport) => folderOf(r).replace(/\b20\d\d-\d\d\b/g, 'YYYY-YY');
 
-const vsPrefix = (name: string) => generateValueSetFriendlyName(name, 0).replace(/_vs\d+$/, '');
 
 function guideText(r: EmisReport, all: EmisReport[]): string {
   // Folder/Source lines are reported as field changes; strip to avoid noise
@@ -282,13 +469,84 @@ function guideText(r: EmisReport, all: EmisReport[]): string {
     .join('\n');
 }
 
+/**
+ * Guide text for the logic patch. Header lines (title, description) are field changes and the
+ * code list table is covered by code list changes, so both are dropped.
+ */
+function guideForPatch(guide: string): string {
+  const out: string[] = [];
+  let header = true;
+  let skip = false;
+  for (const line of guide.split('\n')) {
+    if (line.startsWith('## ')) {
+      header = false;
+      skip = line === '## Code lists used';
+    }
+    if (skip || (header && /^(Report title|Description): /.test(line))) continue;
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** Renames code list tokens (`name_vsN`) in one pass so swapped numbers do not collide */
+const renameLists = (text: string, map: Map<string, string>) => (map.size ? text.replace(/\b[a-z0-9_]+_vs\d+\b/g, (m) => map.get(m) ?? m) : text);
+
+/** Nearest guide heading at or above a line, plus the top-level criterion inside a rule */
+function sectionAt(lines: string[], index: number): string {
+  let criterion = '';
+  for (let i = Math.min(index, lines.length - 1); i >= 0; i--) {
+    const h = lines[i].match(/^#{2,3} (.+)/);
+    if (h) return criterion ? `${h[1]} · ${criterion}` : h[1];
+    const c = !criterion && lines[i].match(/^- \*\*(Criterion [A-Z]+)\b/);
+    if (c) criterion = c[1];
+  }
+  return '';
+}
+
+/** Context lines around each change in the guide patch; hunk headers already name the rule and criterion */
+const PATCH_CONTEXT = 1;
+
+/** Criterion and record labels ("Criterion B", "A.3.1") shift when one is inserted; ignore them when aligning lines */
+const alignKey = (line: string) => line.replace(/\bCriterion [A-Z]{1,2}\b/g, 'Criterion #').replace(/\b[A-Z]{1,2}(?:\.\d+)+\b/g, '#');
+
+/**
+ * Unified diff of two guides. Lines equal apart from criterion labels count as unchanged (the newer
+ * text is shown). Each hunk header ends with the guide section it sits in, as git does with function names.
+ */
 function unifiedPatch(a: string, b: string): string | undefined {
   if (a === b) return undefined;
-  const patch = structuredPatch('base', 'target', `${a}\n`, `${b}\n`, '', '', { context: 2 });
-  if (patch.hunks.length === 0) return undefined;
-  return patch.hunks
-    .map((h) => [`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`, ...h.lines].join('\n'))
-    .join('\n');
+  const al = a.split('\n');
+  const bl = b.split('\n');
+  const rows: Array<{ op: ' ' | '-' | '+'; text: string; o: number; n: number }> = [];
+  let o = 0;
+  let n = 0;
+  for (const c of diffArrays(al, bl, { comparator: (x, y) => alignKey(x) === alignKey(y) })) {
+    for (let i = 0; i < (c.count ?? c.value.length); i++) {
+      if (c.removed) rows.push({ op: '-', text: al[o], o: o++, n });
+      else if (c.added) rows.push({ op: '+', text: bl[n], o, n: n++ });
+      else rows.push({ op: ' ', text: bl[n], o: o++, n: n++ });
+    }
+  }
+  const changed = rows.flatMap((r, i) => (r.op === ' ' ? [] : [i]));
+  if (!changed.length) return undefined;
+
+  const hunks: string[] = [];
+  let i = 0;
+  while (i < changed.length) {
+    let j = i;
+    while (j + 1 < changed.length && changed[j + 1] - changed[j] <= PATCH_CONTEXT * 2 + 1) j++;
+    const from = Math.max(0, changed[i] - PATCH_CONTEXT);
+    const to = Math.min(rows.length - 1, changed[j] + PATCH_CONTEXT);
+    const slice = rows.slice(from, to + 1);
+    const oldLines = slice.filter((r) => r.op !== '+').length;
+    const newLines = slice.filter((r) => r.op !== '-').length;
+    const section = sectionAt(bl, rows[changed[i]].n);
+    hunks.push(
+      [`@@ -${slice[0].o + 1},${oldLines} +${slice[0].n + 1},${newLines} @@${section ? ` ${section}` : ''}`, ...slice.map((r) => `${r.op}${r.text}`)].join('\n')
+    );
+    i = j + 1;
+  }
+  return hunks.join('\n');
 }
 
 interface Side {
@@ -477,7 +735,7 @@ function matchReports(base: Side, target: Side) {
   return { pairs, reverse, getFp };
 }
 
-/** Maps renamed searches' base names and ValueSet name prefixes to their target equivalents */
+/** Maps renamed searches' base names to their target names (code list names are mapped per search) */
 function renameMap(pairs: Pairs): Array<[string, string]> {
   const out = new Map<string, string>();
   for (const [b, { other: t }] of pairs) {
@@ -485,9 +743,6 @@ function renameMap(pairs: Pairs): Array<[string, string]> {
     // Short names would replace unrelated text
     if (b.name.length >= 6) out.set(b.name, t.name);
     if (b.searchName && b.searchName.length >= 6 && b.searchName !== t.searchName) out.set(b.searchName, t.searchName);
-    const bp = vsPrefix(b.name);
-    const tp = vsPrefix(t.name);
-    if (bp && bp !== tp) out.set(`${bp}_vs`, `${tp}_vs`);
   }
   return [...out].sort((a, b) => b[0].length - a[0].length);
 }
@@ -521,6 +776,7 @@ export function diffXmlDocuments(
     renamed: false,
     contentChanged: false,
     fieldChanges: [] as FieldChange[],
+    codeLists: [] as CodeListChange[],
     codesAdded: [] as CodeRef[],
     codesRemoved: [] as CodeRef[],
     codesChildrenChanged: [] as SearchDiffEntry['codesChildrenChanged'],
@@ -537,7 +793,7 @@ export function diffXmlDocuments(
         ...empty(),
         status: 'removed',
         base: refOf(b, base),
-        codesRemoved: [...collectCodes(b).values()],
+        codesRemoved: wholeSearchCodes(b),
         guide: guideText(b, base.reports),
         dependents: base.referencedBy.get(b.xmlId) ?? 0,
       };
@@ -586,16 +842,11 @@ export function diffXmlDocuments(
       e.fieldChanges.push({ field: 'populationCriteria', from: fmt(bGuids, base), to: fmt(tGuids, target) });
     }
 
-    const bc = collectCodes(b);
-    const tc = collectCodes(t);
-    for (const [k, c] of tc) if (!bc.has(k)) e.codesAdded.push(c);
-    for (const [k, c] of bc) {
-      const o = tc.get(k);
-      if (!o) e.codesRemoved.push(c);
-      else if (o.includeChildren !== c.includeChildren && !c.excluded) {
-        e.codesChildrenChanged.push({ code: c.code, displayName: c.displayName, from: c.includeChildren, to: o.includeChildren });
-      }
-    }
+    const lists = diffCodeLists(b, t);
+    e.codeLists = lists.lists;
+    e.codesAdded = lists.codesAdded;
+    e.codesRemoved = lists.codesRemoved;
+    e.codesChildrenChanged = lists.children;
     const bl = libraryItems(b);
     const tl = libraryItems(t);
     e.libraryItemsAdded = [...tl].filter((x) => !bl.has(x));
@@ -604,8 +855,9 @@ export function diffXmlDocuments(
     e.contentChanged =
       getFp(b) !== getFp(t) || !parentSame || !popSame || e.fieldChanges.some((f) => f.field === 'description' || f.field === 'reportType');
     if (e.contentChanged) {
-      // Renames are reported as field changes; map base names to target names so the patch shows logic only
-      e.guidePatch = unifiedPatch(applyRenames(guideText(b, allReports), renames), guideText(t, allReports));
+      // Renames and renumbered code lists are not logic changes; map base names to target names first
+      const before = applyRenames(renameLists(guideForPatch(guideText(b, allReports)), lists.listRenames), renames);
+      e.guidePatch = unifiedPatch(before, guideForPatch(guideText(t, allReports)));
     }
     e.status = e.contentChanged ? 'modified' : e.moved ? 'moved' : e.renamed ? 'renamed' : 'unchanged';
     entries.push(e);
@@ -618,7 +870,7 @@ export function diffXmlDocuments(
       ...empty(),
       status: 'added',
       target: refOf(t, target),
-      codesAdded: [...collectCodes(t).values()],
+      codesAdded: wholeSearchCodes(t),
       guide: guideText(t, target.reports),
       dependents: target.referencedBy.get(t.xmlId) ?? 0,
     };
@@ -626,7 +878,19 @@ export function diffXmlDocuments(
     entryReports.set(e, { t });
   }
 
-  const scopeInfo = options.scope ? applyScope(entryReports, options.scope, base, target) : undefined;
+  const dependencies = dependenciesOf(entryReports, base, target);
+  const scopeInfo = options.scope ? applyScope(entryReports, options.scope, dependencies) : undefined;
+  let affected = 0;
+  for (const [e, deps] of dependencies) {
+    const changed = [...deps].filter((d) => LOGIC_CHANGES.has(d.status));
+    if (!changed.length) continue;
+    if (e.status === 'unchanged') affected++;
+    // Most searches sit on a few shared registers; list dependencies only for changed or in-scope searches
+    if (e.status === 'unchanged' && !e.scope) continue;
+    e.upstreamChanges = changed
+      .map((d) => ({ folder: entryRef(d).folder, name: entryRef(d).name, status: d.status }))
+      .sort((x, y) => `${x.folder}${x.name}`.localeCompare(`${y.folder}${y.name}`));
+  }
 
   const summary = emptyCounts();
   const folders = new Map<string, FolderSummary>();
@@ -655,6 +919,7 @@ export function diffXmlDocuments(
     base: { label: baseIn.label ?? rootLabel(baseIn.doc), fileName: baseIn.fileName, searchCount: base.reports.length },
     target: { label: targetIn.label ?? rootLabel(targetIn.doc), fileName: targetIn.fileName, searchCount: target.reports.length },
     summary,
+    affected,
     folders: [...folders.values()].sort((a, b) => a.folder.localeCompare(b.folder)),
     folderMoves: [...moves.values()].sort((a, b) => b.searches - a.searches),
     scope: scopeInfo,
@@ -662,15 +927,45 @@ export function diffXmlDocuments(
   };
 }
 
-/**
- * Marks listed searches as direct, the searches they depend on (parents and population
- * criteria, transitively, in either export) as ancestors, and records changed dependencies.
- */
+/** Statuses that change what a dependent search returns */
+const LOGIC_CHANGES = new Set<SearchDiffStatus>(['modified', 'added', 'removed']);
+
+/** Searches each entry depends on through parents or population criteria, transitively, in either export */
+function dependenciesOf(reports: Map<SearchDiffEntry, { b?: EmisReport; t?: EmisReport }>, base: Side, target: Side) {
+  const byReport = new Map<EmisReport, SearchDiffEntry>();
+  for (const [e, { b, t }] of reports) {
+    if (b) byReport.set(b, e);
+    if (t) byReport.set(t, e);
+  }
+  const dependencies = new Map<SearchDiffEntry, Set<SearchDiffEntry>>();
+  for (const [e, { b, t }] of reports) {
+    const deps = new Set<SearchDiffEntry>();
+    for (const [start, side] of [[b, base], [t, target]] as const) {
+      if (!start) continue;
+      const seen = new Set<EmisReport>([start]);
+      const queue = [start];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const g of dependencyGuids(cur)) {
+          const dep = side.byGuid.get(g);
+          if (!dep || seen.has(dep)) continue;
+          seen.add(dep);
+          queue.push(dep);
+          const de = byReport.get(dep);
+          if (de && de !== e) deps.add(de);
+        }
+      }
+    }
+    dependencies.set(e, deps);
+  }
+  return dependencies;
+}
+
+/** Marks listed searches as direct and the searches they depend on as ancestors */
 function applyScope(
   reports: Map<SearchDiffEntry, { b?: EmisReport; t?: EmisReport }>,
   scope: DiffScopeInput,
-  base: Side,
-  target: Side
+  dependencies: Map<SearchDiffEntry, Set<SearchDiffEntry>>
 ): DiffScopeSummary {
   const wanted = new Map<string, { folder: string; name: string; tags: Set<string> }>();
   for (const s of scope.searches) {
@@ -678,11 +973,6 @@ function applyScope(
     const w = wanted.get(k) ?? { folder: s.folder, name: s.name, tags: new Set<string>() };
     s.tags?.forEach((x) => w.tags.add(x));
     wanted.set(k, w);
-  }
-  const byReport = new Map<EmisReport, SearchDiffEntry>();
-  for (const [e, { b, t }] of reports) {
-    if (b) byReport.set(b, e);
-    if (t) byReport.set(t, e);
   }
 
   const hitTarget = new Set<string>();
@@ -708,36 +998,14 @@ function applyScope(
   }
 
   let ancestors = 0;
-  let affectedUpstream = 0;
   for (const e of direct) {
-    const { b, t } = reports.get(e)!;
-    const changed = new Map<SearchDiffEntry, UpstreamChange>();
-    for (const [start, side] of [[b, base], [t, target]] as const) {
-      if (!start) continue;
-      const seen = new Set<EmisReport>([start]);
-      const queue = [start];
-      while (queue.length) {
-        const cur = queue.shift()!;
-        for (const g of dependencyGuids(cur)) {
-          const dep = side.byGuid.get(g);
-          if (!dep || seen.has(dep)) continue;
-          seen.add(dep);
-          queue.push(dep);
-          const de = byReport.get(dep);
-          if (!de) continue;
-          if (!de.scope) {
-            de.scope = 'ancestor';
-            ancestors++;
-          }
-          if (de.status !== 'unchanged' && de !== e) changed.set(de, { folder: entryRef(de).folder, name: entryRef(de).name, status: de.status });
-        }
-      }
-    }
-    if (changed.size) {
-      e.upstreamChanges = [...changed.values()].sort((x, y) => `${x.folder}${x.name}`.localeCompare(`${y.folder}${y.name}`));
-      if (e.status === 'unchanged') affectedUpstream++;
+    for (const d of dependencies.get(e) ?? []) {
+      if (d.scope) continue;
+      d.scope = 'ancestor';
+      ancestors++;
     }
   }
+  const affectedUpstream = direct.filter((e) => e.status === 'unchanged' && [...(dependencies.get(e) ?? [])].some((d) => LOGIC_CHANGES.has(d.status))).length;
 
   const rows = (keys: string[]) => keys.map((k) => ({ folder: wanted.get(k)!.folder, name: wanted.get(k)!.name }));
   return {
@@ -804,23 +1072,50 @@ const md = (s: string) => s.replace(/[\\`*_[\]<>|]/g, (c) => `\\${c}`).replace(/
 const code = (s: string) => `\`${s.replace(/`/g, "'").replace(/\n/g, ' ')}\``;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const codeLine = (c: CodeRef) =>
-  `${code(c.code)}${c.displayName ? ` ${md(c.displayName)}` : ''}${c.cluster ? ` (${md(c.cluster)})` : ''}${c.excluded ? ' — exception' : ''}${
-    c.isRefset ? ' — refset' : ''
-  }`;
+  `${code(c.code)}${c.displayName ? ` ${md(c.displayName)}` : ''}${c.excluded ? ' — exception' : ''}${c.isRefset ? ' — refset' : ''}`;
 
-/** Code changes grouped by cluster (ValueSet description); lists without one grouped as "no cluster ID" */
-export function groupCodeChanges(e: SearchDiffEntry) {
-  const groups = new Map<string, { cluster: string; added: CodeRef[]; removed: CodeRef[] }>();
-  const get = (c: CodeRef) => {
-    const cluster = c.cluster ?? 'no cluster ID';
-    let g = groups.get(cluster);
-    if (!g) groups.set(cluster, (g = { cluster, added: [], removed: [] }));
-    return g;
-  };
-  e.codesAdded.forEach((c) => get(c).added.push(c));
-  e.codesRemoved.forEach((c) => get(c).removed.push(c));
-  return [...groups.values()].sort((a, b) => a.cluster.localeCompare(b.cluster));
+export const LIST_STATUS_LABEL: Record<CodeListChange['status'], string> = { changed: 'Changed', added: 'New', removed: 'Removed' };
+
+export interface CodeListDetail extends CodeListChange {
+  codesAdded: CodeRef[];
+  codesRemoved: CodeRef[];
 }
+
+/** Code list changes with their added and removed codes */
+export function codeListDetails(e: SearchDiffEntry): CodeListDetail[] {
+  const details = (e.codeLists ?? []).map((l) => ({ ...l, codesAdded: [] as CodeRef[], codesRemoved: [] as CodeRef[] }));
+  const find = (c: CodeRef) => {
+    const named = details.filter((d) => d.name === c.list);
+    return named.length === 1 ? named[0] : named.find((d) => d.cluster === c.cluster || d.previousCluster === c.cluster);
+  };
+  e.codesAdded.forEach((c) => find(c)?.codesAdded.push(c));
+  e.codesRemoved.forEach((c) => find(c)?.codesRemoved.push(c));
+  return details;
+}
+
+export interface TerminologyChange {
+  status: CodeListChange['status'];
+  cluster: string | null;
+  summary: string;
+  searches: SearchRef[];
+}
+
+/** Code list changes across searches; identical changes (same cluster and summary) are listed once */
+export function collectTerminologyChanges(entries: SearchDiffEntry[]): TerminologyChange[] {
+  const out = new Map<string, TerminologyChange>();
+  for (const e of entries) {
+    for (const l of e.codeLists ?? []) {
+      const k = `${l.status}\u0000${l.cluster ?? ''}\u0000${l.summary}`;
+      const t = out.get(k) ?? { status: l.status, cluster: l.cluster, summary: l.summary, searches: [] };
+      t.searches.push(entryRef(e));
+      out.set(k, t);
+    }
+  }
+  return [...out.values()].sort((a, b) => (a.cluster ?? '\uffff').localeCompare(b.cluster ?? '\uffff') || a.summary.localeCompare(b.summary));
+}
+
+/** Edits repeated on two or more lines of the guide patch, e.g. a date moved on a year */
+export const repeatedEdits = (e: SearchDiffEntry) => (e.guidePatch ? summarizeGuidePatch(e.guidePatch).edits.filter((x) => x.lines > 1) : []);
 
 export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?: boolean; maxCodes?: number } = {}): string {
   // Per cluster and direction; full lists are in the JSON
@@ -845,6 +1140,10 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
   out.push('## Summary', '', '| Status | Searches |', '| --- | ---: |');
   for (const st of Object.keys(STATUS_LABEL) as SearchDiffStatus[]) out.push(`| ${STATUS_LABEL[st]} | ${counts[st]} |`);
   out.push('');
+  const affected = entries.filter((e) => e.status === 'unchanged' && e.upstreamChanges?.length);
+  if (affected.length) {
+    out.push(`${plural(affected.length, 'unchanged search depends', 'unchanged searches depend')} on a modified, added or removed search.`, '');
+  }
 
   if (s && (s.unmatched.length || s.baseOnly.length)) {
     out.push('## Scope rows to check', '');
@@ -871,6 +1170,17 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
     out.push('## Changed folders', '', '| Folder | Modified | Added | Removed | Moved | Renamed |', '| --- | ---: | ---: | ---: | ---: | ---: |');
     for (const [folder, c] of [...changedFolders].sort((a, b) => a[0].localeCompare(b[0]))) {
       out.push(`| ${md(folder || '(root)')} | ${c.modified} | ${c.added} | ${c.removed} | ${c.moved} | ${c.renamed} |`);
+    }
+    out.push('');
+  }
+
+  const terminology = collectTerminologyChanges(entries);
+  if (terminology.length) {
+    out.push('## Code list changes', '', 'Code lists added, removed or edited in searches present in both files.', '');
+    out.push('| Cluster | Change | Searches |', '| --- | --- | --- |');
+    for (const t of terminology) {
+      const change = t.status === 'changed' ? t.summary : `${LIST_STATUS_LABEL[t.status]}: ${t.summary}`;
+      out.push(`| ${t.cluster ? code(t.cluster) : '—'} | ${md(change)} | ${t.searches.map((r) => md(r.name)).join('<br>')} |`);
     }
     out.push('');
   }
@@ -930,8 +1240,8 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
     out.push('');
   }
 
-  const affected = entries.filter((e) => e.status === 'unchanged' && e.upstreamChanges?.length);
-  if (affected.length) {
+  // Listed in full for scoped output only; without a scope every dependant of a changed register would be listed
+  if (s && affected.length) {
     out.push(`## Unchanged, but depend on a changed search (${affected.length})`, '');
     for (const e of affected) {
       out.push(`- **${md(entryRef(e).name)}**${scopeNote(e)}: ${e.upstreamChanges!.map((u) => `${md(u.name)} (${u.status})`).join('; ')}`);
@@ -951,14 +1261,24 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
       out.push('');
       for (const f of e.fieldChanges) out.push(`- **${FIELD_LABEL[f.field]}**: ${code(f.from ?? '—')} → ${code(f.to ?? '—')}`);
       for (const w of e.warnings) out.push(`- **Warning**: ${md(w)}`);
-      for (const g of groupCodeChanges(e)) {
-        out.push(`- **Codes, ${md(g.cluster)}**: +${g.added.length} / −${g.removed.length}`);
+      const lists = codeListDetails(e);
+      if (lists.length) out.push('- **Code lists**:');
+      for (const l of lists) {
+        const label = l.cluster ? `${code(l.cluster)} (${code(l.name)})` : code(l.name);
+        out.push(`  - ${LIST_STATUS_LABEL[l.status]} ${label}: ${md(l.summary)}`);
         const show = (sign: string, list: CodeRef[]) => {
-          list.slice(0, maxCodes).forEach((c) => out.push(`  - ${sign} ${codeLine(c)}`));
-          if (list.length > maxCodes) out.push(`  - ${sign} … ${list.length - maxCodes} more (see JSON)`);
+          list.slice(0, maxCodes).forEach((c) => out.push(`    - ${sign} ${codeLine(c)}`));
+          if (list.length > maxCodes) out.push(`    - ${sign} … ${list.length - maxCodes} more (see JSON)`);
         };
-        show('+', g.added);
-        show('−', g.removed);
+        // A single refset is fully described by the summary
+        const single = (cs: CodeRef[]) => cs.length === 1 && cs[0].isRefset;
+        if (!single(l.codesAdded)) show('+', l.codesAdded);
+        if (!single(l.codesRemoved)) show('−', l.codesRemoved);
+      }
+      const edits = repeatedEdits(e).slice(0, 5);
+      if (edits.length) {
+        const edit = (x: RepeatedEdit) => (!x.from ? `added ${code(x.to)}` : !x.to ? `removed ${code(x.from)}` : `${code(x.from)} → ${code(x.to)}`);
+        out.push(`- **Repeated edits**: ${edits.map((x) => `${edit(x)} (${x.lines} lines)`).join('; ')}`);
       }
       for (const c of e.codesChildrenChanged) out.push(`- **Include children** ${code(c.code)} ${md(c.displayName)}: ${c.from} → ${c.to}`);
       if (e.libraryItemsAdded.length) out.push(`- **Library items added**: ${e.libraryItemsAdded.map(code).join(', ')}`);

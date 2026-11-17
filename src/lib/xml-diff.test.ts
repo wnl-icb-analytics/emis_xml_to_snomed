@@ -37,7 +37,16 @@ function report(s: Spec, root: string): EmisReport {
         id: s.groupId ?? `grp-${s.name}`,
         memberOperator: 'AND',
         criteria: [
-          { id: `crit-${s.name}`, table: 'EVENTS', displayName: 'Clinical Codes', negation: false, valueSets: [vs], columnFilters: [], restrictions: [], linkedCriteria: [] },
+          {
+            id: `crit-${s.name}`,
+            table: 'EVENTS',
+            displayName: 'Clinical Codes',
+            negation: false,
+            valueSets: [vs],
+            columnFilters: [{ columns: ['READCODE'], inNotIn: 'IN', valueSets: [vs] }],
+            restrictions: [],
+            linkedCriteria: [],
+          },
         ],
         populationCriteria: (s.popRefs ?? []).map((g, i) => ({ id: `pop-${i}`, reportGuid: g })),
         actionIfTrue: 'SELECT',
@@ -67,16 +76,64 @@ test('rotated GUIDs and root folder rename are not reported as changes', () => {
   assert.equal(r.target.label, 'SET R6');
 });
 
-test('code list changes are reported with a guide patch', () => {
+test('code list changes are reported per list, not as guide noise', () => {
   const r = run(
     [{ guid: 'a1', folder: 'Registers', name: 'Asthma Register', codes: ['1001', '1002'] }],
     [{ guid: 'b1', folder: 'Registers', name: 'Asthma Register', codes: ['1001', '1003'] }]
   );
   const [e] = r.entries;
   assert.equal(e.status, 'modified');
-  assert.deepEqual(e.codesAdded.map((c) => c.code), ['1003']);
+  assert.deepEqual(e.codesAdded.map((c) => [c.list, c.code]), [['asthma_reg_vs1', '1003']]);
   assert.deepEqual(e.codesRemoved.map((c) => c.code), ['1002']);
-  assert.ok(e.guidePatch?.includes('@@'));
+  assert.deepEqual(
+    e.codeLists.map((l) => [l.status, l.name, l.cluster, l.summary]),
+    [['changed', 'asthma_reg_vs1', 'TEST_COD', 'Added 1 code (Concept 1003); removed 1 code (Concept 1002)']]
+  );
+  // Same code count, so the rule text is unchanged
+  assert.equal(e.guidePatch, undefined);
+});
+
+test('renumbered code lists are paired by content and cluster, not by number', () => {
+  const vs = (description: string, codes: string[], isRefset = false) => ({
+    id: `vs-${description}`,
+    codeSystem: 'SNOMED_CONCEPT',
+    description,
+    values: codes.map((code) => ({ code, displayName: isRefset ? '' : `Concept ${code}`, includeChildren: false, isRefset })),
+    exceptions: [],
+  });
+  const withLists = (d: EmisXmlDocument, lists: ReturnType<typeof vs>[]) => {
+    const r = d.reports[0];
+    r.valueSets = lists;
+    r.criteriaGroups![0].criteria = lists.map((l, i) => ({
+      id: `crit-${i}`,
+      table: 'EVENTS',
+      displayName: 'Clinical Codes',
+      negation: false,
+      valueSets: [l],
+      columnFilters: [{ columns: ['READCODE'], inNotIn: 'IN', valueSets: [l] }],
+      restrictions: [],
+      linkedCriteria: [],
+    }));
+    return d;
+  };
+  const a = withLists(doc('SET R5', [{ guid: 'a', folder: 'F', name: 'COPD Register' }]), [vs('COPD_COD', ['1']), vs('ASTTRT_COD', ['11', '12', '13'])]);
+  const b = withLists(doc('SET R6', [{ guid: 'b', folder: 'F', name: 'COPD Register' }]), [
+    vs('COPDDIAG_COD', ['99'], true),
+    vs('COPD_COD', ['1']),
+    vs('ASTTRT_COD', ['77'], true),
+  ]);
+  const [e] = diffXmlDocuments({ doc: a, fileName: 'a.xml' }, { doc: b, fileName: 'b.xml' }).entries;
+  assert.deepEqual(
+    e.codeLists.map((l) => [l.status, l.cluster, l.previousName ?? null, l.name, l.summary]),
+    [
+      ['changed', 'ASTTRT_COD', 'copd_reg_vs2', 'copd_reg_vs3', 'Replaced 3 codes with refset 77'],
+      ['added', 'COPDDIAG_COD', null, 'copd_reg_vs1', 'Refset 99'],
+    ]
+  );
+  // COPD_COD moved from vs1 to vs2 without changing; the patch must not show it
+  assert.ok(e.guidePatch);
+  assert.ok(!/^[-+].*COPD_COD/m.test(e.guidePatch!), e.guidePatch);
+  assert.match(e.guidePatch!, /^@@ .* @@ Rule 1 of 1 — .* · Criterion [A-C]$/m);
 });
 
 test('identical search in a new folder is matched by content as moved', () => {
@@ -175,7 +232,8 @@ test('scope marks direct searches with tags and their parents as ancestors', () 
   const md = renderXmlDiffMarkdown(r, { scopeOnly: true });
   assert.match(md, /## Impact by dbt tag/);
   assert.match(md, /\| `int_model_a` \| Child \(modified\) \| — \|/);
-  assert.match(md, /```diff/);
+  assert.match(md, /- \*\*Code lists\*\*/);
+  assert.match(md, /- Changed `TEST_COD` \(`child_vs1`\): Replaced 1 code with 1 code \(Concept 2\)/);
 });
 
 test('parseDiffScope accepts a plain array and rejects other shapes', () => {
