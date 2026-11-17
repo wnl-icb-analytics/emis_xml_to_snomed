@@ -98,7 +98,7 @@ export default function XmlUploader({ uploadOnly = false }: { uploadOnly?: boole
       const file = acceptedFiles[0];
       if (!file) return;
 
-      setFileName(file.name);
+      if (!uploadOnly) setFileName(file.name);
       setIsProcessing(true);
 
       try {
@@ -111,15 +111,16 @@ export default function XmlUploader({ uploadOnly = false }: { uploadOnly?: boole
           }),
         ]);
         const parsedData = await parseEmisXml(xmlContent);
-        const minimalData = buildMinimalParsedXmlData(parsedData, file.name);
 
-        await saveParsedXmlData(minimalData);
-        setSelectedBlobPath(buildXmlBlobPath(file.name));
-        await refreshBlobFiles();
-
-        window.dispatchEvent(
-          new CustomEvent('xml-parsed', { detail: parsedData })
-        );
+        if (uploadOnly) {
+          // Add to the shared list only; the file open in Explore stays as it is
+          window.dispatchEvent(new Event('xml-files-changed'));
+        } else {
+          await saveParsedXmlData(buildMinimalParsedXmlData(parsedData, file.name));
+          setSelectedBlobPath(buildXmlBlobPath(file.name));
+          await refreshBlobFiles();
+          window.dispatchEvent(new CustomEvent('xml-parsed', { detail: parsedData }));
+        }
 
         if (parsedData.reports.length === 0) {
           toast({
@@ -129,8 +130,10 @@ export default function XmlUploader({ uploadOnly = false }: { uploadOnly?: boole
           });
         } else {
           toast({
-            title: 'Success',
-            description: `Loaded ${parsedData.reports.length} searches`,
+            title: uploadOnly ? 'Uploaded to shared files' : 'Success',
+            description: uploadOnly
+              ? `${file.name}: ${parsedData.reports.length} searches`
+              : `Loaded ${parsedData.reports.length} searches`,
           });
         }
       } catch (error) {
@@ -146,7 +149,7 @@ export default function XmlUploader({ uploadOnly = false }: { uploadOnly?: boole
         setIsProcessing(false);
       }
     },
-    [toast]
+    [refreshBlobFiles, toast, uploadOnly]
   );
 
   const handleSelectBlob = async (pathname: string) => {

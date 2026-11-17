@@ -93,6 +93,8 @@ export interface UpstreamChange {
   folder: string;
   name: string;
   status: SearchDiffStatus;
+  /** Parent search name; tells apart searches sharing a folder and name */
+  parent?: string;
 }
 
 export interface SearchDiffEntry {
@@ -888,7 +890,10 @@ export function diffXmlDocuments(
     // Most searches sit on a few shared registers; list dependencies only for changed or in-scope searches
     if (e.status === 'unchanged' && !e.scope) continue;
     e.upstreamChanges = changed
-      .map((d) => ({ folder: entryRef(d).folder, name: entryRef(d).name, status: d.status }))
+      .map((d) => {
+        const r = entryRef(d);
+        return { folder: r.folder, name: r.name, status: d.status, ...(r.parent ? { parent: r.parent } : {}) };
+      })
       .sort((x, y) => `${x.folder}${x.name}`.localeCompare(`${y.folder}${y.name}`));
   }
 
@@ -1141,8 +1146,10 @@ export function renderXmlDiffMarkdown(result: XmlDiffResult, opts: { scopeOnly?:
   for (const st of Object.keys(STATUS_LABEL) as SearchDiffStatus[]) out.push(`| ${STATUS_LABEL[st]} | ${counts[st]} |`);
   out.push('');
   const affected = entries.filter((e) => e.status === 'unchanged' && e.upstreamChanges?.length);
-  if (affected.length) {
-    out.push(`${plural(affected.length, 'unchanged search depends', 'unchanged searches depend')} on a modified, added or removed search.`, '');
+  // Unscoped output: dependants of changed searches are only counted, not listed (see `affected`)
+  const affectedCount = opts.scopeOnly ? affected.length : result.affected;
+  if (affectedCount) {
+    out.push(`${plural(affectedCount, 'unchanged search depends', 'unchanged searches depend')} on a modified, added or removed search.`, '');
   }
 
   if (s && (s.unmatched.length || s.baseOnly.length)) {

@@ -88,7 +88,8 @@ export function CodeListChanges({ entry }: { entry: SearchDiffEntry }) {
           <div className="mb-1 font-medium">Include-children changed on {plural(entry.codesChildrenChanged.length, 'code')}</div>
           {entry.codesChildrenChanged.map((c) => (
             <div key={`${c.list}${c.code}`} className="text-xs text-muted-foreground">
-              <code className="font-mono text-foreground">{c.code}</code> {c.displayName}: {c.from ? 'with children' : 'code only'} →{' '}
+              <code className="font-mono text-foreground">{c.code}</code> {c.displayName}
+              {c.list && <span className="font-mono text-[11px]"> in {c.list}</span>}: {c.from ? 'with children' : 'code only'} →{' '}
               {c.to ? 'with children' : 'code only'}
             </div>
           ))}

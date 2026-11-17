@@ -110,7 +110,8 @@ function gist(e: SearchDiffEntry): string {
 }
 
 export function CompareChangeList() {
-  const { result, visible, counts, statuses, toggleStatus, scopeOnly, setScopeOnly, query, setQuery, selected, select } = useCompare();
+  const { result, visible, counts, statuses, toggleStatus, showAffected, setShowAffected, affectedCount, scopeOnly, setScopeOnly, query, setQuery, selected, select } =
+    useCompare();
   const listRef = useRef<HTMLDivElement>(null);
 
   // Folder headers between runs of entries in the same folder
@@ -171,6 +172,22 @@ export function CompareChangeList() {
             <span className="tabular-nums opacity-80">{counts[s].toLocaleString()}</span>
           </button>
         ))}
+        {affectedCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAffected(!showAffected)}
+            aria-pressed={showAffected}
+            title="Unchanged searches that depend on a modified, added or removed search. Shown even when Unchanged is off."
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors',
+              showAffected ? STATUS.modified.badge : 'border-border text-muted-foreground hover:bg-muted/50'
+            )}
+          >
+            <span className="h-1.5 w-1.5 rounded-full border border-amber-500" />
+            Depends on a change
+            <span className="tabular-nums opacity-80">{affectedCount.toLocaleString()}</span>
+          </button>
+        )}
       </div>
       {result.scope && (
         <div className="flex items-center gap-2 px-0.5">

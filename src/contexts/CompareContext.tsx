@@ -30,6 +30,11 @@ interface CompareContextValue {
   runDiff: () => Promise<void>;
   statuses: Set<SearchDiffStatus>;
   toggleStatus: (s: SearchDiffStatus) => void;
+  /** Show unchanged searches that depend on a changed one, even when Unchanged is off */
+  showAffected: boolean;
+  setShowAffected: (v: boolean) => void;
+  /** Unchanged searches listing changed searches they depend on (in-scope only when scopeOnly is on) */
+  affectedCount: number;
   scopeOnly: boolean;
   setScopeOnly: (v: boolean) => void;
   query: string;
@@ -40,8 +45,11 @@ interface CompareContextValue {
   counts: Record<SearchDiffStatus, number>;
   selected: SearchDiffEntry | null;
   select: (e: SearchDiffEntry | null) => void;
-  selectByRef: (folder: string, name: string) => void;
+  /** Opens the entry with this folder, name and parent; duplicates in one folder differ by parent */
+  selectByRef: (ref: { folder: string; name: string; parent?: string }) => void;
 }
+
+const isAffected = (e: SearchDiffEntry) => e.status === 'unchanged' && !!e.upstreamChanges?.length;
 
 const CompareContext = createContext<CompareContextValue | undefined>(undefined);
 
@@ -55,6 +63,7 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
   const [result, setResult] = useState<XmlDiffResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [statuses, setStatuses] = useState<Set<SearchDiffStatus>>(new Set(CHANGED));
+  const [showAffected, setShowAffected] = useState(true);
   const [scopeOnly, setScopeOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<SearchDiffEntry | null>(null);
@@ -84,7 +93,11 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
     if (!active) return;
     loadFiles();
     window.addEventListener('xml-parsed', loadFiles);
-    return () => window.removeEventListener('xml-parsed', loadFiles);
+    window.addEventListener('xml-files-changed', loadFiles);
+    return () => {
+      window.removeEventListener('xml-parsed', loadFiles);
+      window.removeEventListener('xml-files-changed', loadFiles);
+    };
   }, [active, loadFiles]);
 
   useEffect(() => {
@@ -115,6 +128,8 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
       }
       if (!res.ok || !data.success || !data.data) throw new Error(data.error || 'Diff failed');
       setResult(data.data);
+      // A search picked from the previous result while this one ran is no longer valid
+      setSelected(null);
       setScopeOnly(!!data.data.scope);
     } catch (error) {
       toast({ variant: 'destructive', title: 'Diff failed', description: error instanceof Error ? error.message : String(error) });
@@ -164,8 +179,7 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
     if (!result) return [];
     const q = query.trim().toLowerCase();
     return result.entries.filter((e) => {
-      const affected = scopeOnly && e.status === 'unchanged' && !!e.upstreamChanges?.length;
-      if (!statuses.has(e.status) && !affected) return false;
+      if (!statuses.has(e.status) && !(showAffected && isAffected(e))) return false;
       if (scopeOnly && !e.scope) return false;
       if (!q) return true;
       const hay = [e.base?.name, e.base?.folder, e.target?.name, e.target?.folder, ...(e.scopeTags ?? []), ...(e.codeLists ?? []).map((l) => l.cluster ?? '')]
@@ -173,7 +187,12 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [result, statuses, scopeOnly, query]);
+  }, [result, statuses, showAffected, scopeOnly, query]);
+
+  const affectedCount = useMemo(
+    () => (result ? result.entries.filter((e) => isAffected(e) && (!scopeOnly || e.scope)).length : 0),
+    [result, scopeOnly]
+  );
 
   const counts = useMemo(() => {
     const c: Record<SearchDiffStatus, number> = { added: 0, removed: 0, modified: 0, moved: 0, renamed: 0, unchanged: 0 };
@@ -184,8 +203,11 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
   }, [result, scopeOnly]);
 
   const selectByRef = useCallback(
-    (folder: string, name: string) => {
-      const hit = result?.entries.find((x) => entryRef(x).folder === folder && entryRef(x).name === name);
+    (ref: { folder: string; name: string; parent?: string }) => {
+      const hit = result?.entries.find((x) => {
+        const r = entryRef(x);
+        return r.folder === ref.folder && r.name === ref.name && (r.parent ?? '') === (ref.parent ?? '');
+      });
       if (hit) setSelected(hit);
     },
     [result]
@@ -206,6 +228,9 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
     runDiff,
     statuses,
     toggleStatus,
+    showAffected,
+    setShowAffected,
+    affectedCount,
     scopeOnly,
     setScopeOnly,
     query,

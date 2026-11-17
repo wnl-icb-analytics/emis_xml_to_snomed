@@ -413,3 +413,21 @@ test('a code removed from one cluster but kept in another is reported for that c
   assert.deepEqual(e.codesRemoved.map((c) => [c.cluster, c.code]), [['B_COD', '1001']]);
   assert.equal(e.codesAdded.length, 0);
 });
+
+test('unscoped output counts unchanged dependants of a changed search without listing them', () => {
+  const r = run(
+    [
+      { guid: 'reg', folder: 'F', name: 'HF Register', codes: ['1'] },
+      { guid: 'c', folder: 'F', name: 'Child', parent: 'reg' },
+    ],
+    [
+      { guid: 'reg2', folder: 'F', name: 'HF Register', codes: ['1', '2'] },
+      { guid: 'd', folder: 'F', name: 'Child', parent: 'reg2' },
+    ]
+  );
+  const child = r.entries.find((e) => e.target?.name === 'Child')!;
+  assert.equal(child.status, 'unchanged');
+  assert.equal(child.upstreamChanges, undefined);
+  assert.equal(r.affected, 1);
+  assert.match(renderXmlDiffMarkdown(r), /^1 unchanged search depends on a modified, added or removed search\.$/m);
+});

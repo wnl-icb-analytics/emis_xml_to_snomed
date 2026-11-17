@@ -114,10 +114,10 @@ function Notice({ children }: { children: React.ReactNode }) {
 }
 
 /** Clickable search name that opens its detail */
-function SearchLink({ r, className }: { r: SearchRef | { folder: string; name: string }; className?: string }) {
+function SearchLink({ r, className }: { r: SearchRef; className?: string }) {
   const { selectByRef } = useCompare();
   return (
-    <button type="button" onClick={() => selectByRef(r.folder, r.name)} className={cn('text-left hover:text-primary hover:underline', className)}>
+    <button type="button" onClick={() => selectByRef(r)} className={cn('text-left hover:text-primary hover:underline', className)}>
       {r.name}
     </button>
   );
@@ -256,8 +256,8 @@ function Overview({ result }: { result: XmlDiffResult }) {
                       </div>
                     </td>
                     <td className="px-4 py-2 text-xs">
-                      {t.searches.map((r) => (
-                        <SearchLink key={`${r.folder}${r.name}`} r={r} className="block" />
+                      {t.searches.map((r, i) => (
+                        <SearchLink key={i} r={r} className="block" />
                       ))}
                     </td>
                   </tr>
@@ -479,11 +479,11 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
         <Card className="shadow-sm">
           <SectionHeader title="Depends on changed searches" />
           <CardContent className="px-0 pb-1 pt-0">
-            {e.upstreamChanges.map((u) => (
+            {e.upstreamChanges.map((u, i) => (
               <button
-                key={`${u.folder}${u.name}`}
+                key={i}
                 type="button"
-                onClick={() => selectByRef(u.folder, u.name)}
+                onClick={() => selectByRef(u)}
                 className="flex w-full items-center gap-3 border-b border-border/50 px-4 py-2 text-left text-sm last:border-0 hover:bg-muted/40"
               >
                 <span className="min-w-0 flex-1">
