@@ -18,7 +18,22 @@ export const STATUS: Record<SearchDiffStatus, { label: string; badge: string; do
   unchanged: { label: 'Unchanged', badge: GRAY, dot: 'bg-muted-foreground/40', text: 'text-muted-foreground', hint: 'Identical in both files' },
 };
 
-export const STATUS_ORDER: SearchDiffStatus[] = ['modified', 'added', 'removed', 'moved', 'renamed', 'unchanged'];
+/**
+ * Diff highlights. Solid 50/100 tints, like the rule badges: translucent ones fade out on white
+ * cards and turn grey on the page background.
+ */
+export const DIFF = {
+  addRow: 'bg-emerald-50 text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100',
+  delRow: 'bg-red-50 text-red-950 dark:bg-red-950/40 dark:text-red-100',
+  editRow: 'bg-amber-50 dark:bg-amber-950/40',
+  addBox: 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40',
+  delBox: 'border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/40 dark:text-red-100',
+  editBox: 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40',
+  addText: 'rounded-sm bg-emerald-100 px-0.5 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
+  delText: 'rounded-sm bg-red-100 px-0.5 text-red-800 line-through decoration-red-400 dark:bg-red-900 dark:text-red-200',
+};
+
+export const STATUS_ORDER: SearchDiffStatus[] =['modified', 'added', 'removed', 'moved', 'renamed', 'unchanged'];
 
 export const LIST_STATUS: Record<CodeListChange['status'], { label: string; badge: string }> = {
   changed: { label: 'Changed', badge: AMBER },

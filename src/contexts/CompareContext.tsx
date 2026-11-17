@@ -45,8 +45,18 @@ interface CompareContextValue {
   counts: Record<SearchDiffStatus, number>;
   selected: SearchDiffEntry | null;
   select: (e: SearchDiffEntry | null) => void;
-  /** Opens the entry with this folder, name and parent; duplicates in one folder differ by parent */
-  selectByRef: (ref: { folder: string; name: string; parent?: string }) => void;
+  /**
+   * Opens the entry with this folder, name and parent (duplicates in one folder differ by parent).
+   * `focus` opens a code list change in place, e.g. when coming from the overview table.
+   */
+  selectByRef: (ref: { folder: string; name: string; parent?: string }, focus?: ListFocus) => void;
+  focus: ListFocus | null;
+}
+
+/** A code list change to open and scroll to in the selected search */
+export interface ListFocus {
+  cluster: string | null;
+  summary: string;
 }
 
 const isAffected = (e: SearchDiffEntry) => e.status === 'unchanged' && !!e.upstreamChanges?.length;
@@ -67,6 +77,11 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
   const [scopeOnly, setScopeOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<SearchDiffEntry | null>(null);
+  const [focus, setFocus] = useState<ListFocus | null>(null);
+  const select = useCallback((e: SearchDiffEntry | null) => {
+    setSelected(e);
+    setFocus(null);
+  }, []);
 
   const loadFiles = useCallback(() => {
     fetch('/api/xml-files')
@@ -203,12 +218,14 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
   }, [result, scopeOnly]);
 
   const selectByRef = useCallback(
-    (ref: { folder: string; name: string; parent?: string }) => {
+    (ref: { folder: string; name: string; parent?: string }, listFocus?: ListFocus) => {
       const hit = result?.entries.find((x) => {
         const r = entryRef(x);
         return r.folder === ref.folder && r.name === ref.name && (r.parent ?? '') === (ref.parent ?? '');
       });
-      if (hit) setSelected(hit);
+      if (!hit) return;
+      setSelected(hit);
+      setFocus(listFocus ?? null);
     },
     [result]
   );
@@ -238,8 +255,9 @@ export function CompareProvider({ children }: { children: React.ReactNode }) {
     visible,
     counts,
     selected,
-    select: setSelected,
+    select,
     selectByRef,
+    focus,
   };
   return <CompareContext.Provider value={value}>{children}</CompareContext.Provider>;
 }

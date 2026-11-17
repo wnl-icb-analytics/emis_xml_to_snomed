@@ -48,7 +48,7 @@ interface RuleDisplayProps {
 }
 
 // Code system badge colours matching existing scheme
-function codeSystemBadgeClass(cs?: string): string {
+export function codeSystemBadgeClass(cs?: string): string {
   switch (cs?.toUpperCase()) {
     case 'SNOMED_CONCEPT':
       return 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30';
@@ -81,7 +81,7 @@ function codeSystemLabel(cs?: string): string {
   }
 }
 
-function actionBadgeClass(action: string): string {
+export function actionBadgeClass(action: string): string {
   switch (action) {
     case 'SELECT': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700';
     case 'REJECT': return 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-red-300 dark:border-red-700';
@@ -90,7 +90,7 @@ function actionBadgeClass(action: string): string {
   }
 }
 
-function actionLabel(action: string): string {
+export function actionLabel(action: string): string {
   switch (action) {
     case 'SELECT': return 'Include';
     case 'REJECT': return 'Exclude';

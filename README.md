@@ -70,11 +70,14 @@ npm run start
 
 ## Comparing search sets
 
-Compare mode diffs two shared XML files. Pick the older and newer file in the sidebar; changed searches are listed there by folder (`j` / `k` move through them). The overview shows status counts, code list changes across all searches, and a summary per modified search. Each search shows:
+Compare mode diffs two shared XML files. Pick the older and newer file in the sidebar; changed searches are listed there by folder (`j` / `k` move through them). The overview opens on **patch notes**: highlights (edits made across several searches, code list changes, new and removed folders, folder moves), then every changed search with each change on one line as its exact delta (`<= 90` ⇒ `< 90`, labelled with its rule and criterion), edits repeated within a search grouped with a count, new and removed logic in full, and code list changes with the codes added and removed. New searches show their full logic; removed and moved searches are listed. Changed searches are ordered by reach: how many searches depend on them (transitively) and how many of those are outputs nothing else depends on, listed under each search. Edits that only move a year on (`01/04/2025` ⇒ `01/04/2026`, `2025-26` ⇒ `2026-27`, `APR25` ⇒ `APR26`) are folded as routine; searches with nothing else are listed under "Routine year rollover". Common edits carry a plain-English note: a boundary made strict or inclusive, a threshold or look-back window changed, latest ⇄ earliest record, a code list swapped, a rule's pass/fail outcome, AND ⇄ OR, NOT added or removed, a library item replaced by criteria, and two same-column filters reduced to one. A criterion whose code list changed and that keeps less than half its lines is shown as replaced, with old and new logic side by side, since EMIS keeps a criterion's ID when an author repurposes it. Changed code lists can be expanded on the terminology server (both versions, including children, refset members and EMIS code translation) to show the SNOMED concepts gained and lost; codes the server cannot expand are counted and make the result approximate. The "Summary tables" tab keeps the earlier tables. Each search shows:
 
-- **Properties**: name, folder, description, parent and population criteria.
-- **Code lists**: each list added, removed or changed, with a plain-English summary (e.g. "Replaced 521 codes with refset 12463601000001108") and the codes behind it.
-- **Logic**: the implementation guide diff, one block per rule and criterion, with edited lines shown as word-level changes. Edits repeated on several lines (e.g. `01/04/2025` → `01/04/2026`) are summarised, identical blocks in different rules are shown once, and long runs of new or removed lines start folded.
+- **Properties**: name, folder, description, parent and population criteria, with only the edited characters marked (`APR25` → `APR26`).
+- **Rules & codes**: each rule as an Explore-style card holding an indented outline, one line per criterion, condition, restriction or group. Changes are marked by a coloured gutter (green new, red removed, amber edited) with edited characters highlighted, and pass/fail actions or operators shown old → new. "Changes only" folds unchanged rules and criteria to one line; "Full search" shows everything. A floating control (or `n` / `p`) steps through each change. Searches whose rules are identical but whose code list contents changed are tagged "logic unchanged". New and removed searches show their full logic without change marks.
+- **Code lists**: each list added, removed or changed, with a plain-English summary (e.g. "Replaced 521 codes with refset 12463601000001108"). Changed lists open in place under the filter that uses them to show the codes added, removed or with include-children changed; the overview's code list table links straight to them.
+- **Implementation guide**: the guide text diff, one block per rule and criterion. Edits repeated on several lines (e.g. `01/04/2025` → `01/04/2026`) are summarised, identical blocks in different rules are shown once, and long runs of new or removed lines start folded. New and removed searches show the full guide.
+
+Rules and criteria are paired by their EMIS IDs, which survive re-export, then by content.
 
 EMIS re-exports give every search, folder and parent a new GUID, so searches are matched on:
 
@@ -95,10 +98,11 @@ An optional scope file limits the view to searches you depend on. It takes a JSO
 
 Downloads:
 
-- **JSON** (`schemaVersion` 2): every search with its status; matched searches carry `codeLists` (one summary per added, removed or changed list) and codes tagged with their `list`, guide patches whose hunk headers name the rule and criterion, and, for added/removed searches, the full guide.
-- **Markdown**: summary, scope rows to check, folder moves, changed folders, code list changes, impact by scope tag, added/removed lists, and per-search changes with code lists, repeated edits and `diff` blocks.
+- **JSON** (`schemaVersion` 2): every search with its status; changed, added and removed searches carry `rules` (the rules view as data), `codeLists` (one summary per list) and codes tagged with their `list`; modified searches carry guide patches whose hunk headers name the rule and criterion, and added/removed searches the full guide.
+- **Patch notes** (Markdown): the patch notes above; code lists sit in collapsible `<details>` blocks. The command line writes them to `<outPrefix>.patch-notes.md`.
+- **Full Markdown**: summary, scope rows to check, folder moves, changed folders, code list changes, impact by scope tag, added/removed lists, and per-search changes with code lists, repeated edits and `diff` blocks.
 
-`/api/xml-diff` keeps responses under 4 MB (Vercel's limit is 4.5 MB) by leaving out guides, then code lists, for added/removed searches. The command line has no limit.
+`/api/xml-diff` keeps responses under 4 MB (Vercel's limit is 4.5 MB) by leaving out guides, then code lists, for added/removed searches, then rules (added/removed first). The command line has no limit.
 
 The same output is available from the command line:
 

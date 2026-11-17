@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { ArrowUpDown, FileJson, Folder, GitCompare, Loader2, Search, Upload, X } from 'lucide-react';
 import { entryRef, type SearchDiffEntry } from '@/lib/xml-diff';
+import { ruleChangeKind } from '@/lib/rule-diff';
 import { useCompare } from '@/contexts/CompareContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,7 +63,7 @@ export function CompareControls() {
         }}
       />
       {scope ? (
-        <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs">
+        <div className="flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1.5 text-xs">
           <FileJson className="h-3.5 w-3.5 shrink-0 text-primary" />
           <span className="truncate font-medium">{scope.label}</span>
           <span className="shrink-0 text-muted-foreground">{plural(scope.count, 'search', 'searches')}</span>
@@ -96,8 +97,9 @@ function gist(e: SearchDiffEntry): string {
   if (e.status === 'unchanged') return e.upstreamChanges?.length ? 'Depends on a changed search' : '';
   if (e.status === 'added' || e.status === 'removed') return e.dependents ? plural(e.dependents, 'dependent search', 'dependent searches') : '';
   const fields = new Set(e.fieldChanges.map((f) => f.field));
+  const kind = e.rules ? ruleChangeKind(e.rules) : e.guidePatch ? 'logic' : 'none';
   const parts = [
-    e.guidePatch && 'logic',
+    kind === 'logic' ? 'logic' : kind === 'codes' && 'logic unchanged',
     e.codeLists?.length && plural(e.codeLists.length, 'code list'),
     (fields.has('parent') || fields.has('populationCriteria')) && 'parent',
     (e.libraryItemsAdded.length || e.libraryItemsRemoved.length) && 'library items',
@@ -164,7 +166,7 @@ export function CompareChangeList() {
             title={STATUS[s].hint}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors',
-              statuses.has(s) ? STATUS[s].badge : 'border-border text-muted-foreground hover:bg-muted/50'
+              statuses.has(s) ? STATUS[s].badge : 'border-border bg-card text-muted-foreground hover:bg-muted'
             )}
           >
             <span className={cn('h-1.5 w-1.5 rounded-full', STATUS[s].dot)} />
@@ -180,7 +182,7 @@ export function CompareChangeList() {
             title="Unchanged searches that depend on a modified, added or removed search. Shown even when Unchanged is off."
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors',
-              showAffected ? STATUS.modified.badge : 'border-border text-muted-foreground hover:bg-muted/50'
+              showAffected ? STATUS.modified.badge : 'border-border bg-card text-muted-foreground hover:bg-muted'
             )}
           >
             <span className="h-1.5 w-1.5 rounded-full border border-amber-500" />
