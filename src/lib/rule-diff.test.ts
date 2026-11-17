@@ -159,3 +159,11 @@ test('a criterion that changes table keeps the older one', () => {
   assert.equal(c.table, 'PATIENTS');
   assert.equal(ruleChangeKind(rules), 'logic');
 });
+
+test('a column group that gains columns from none is a logic change', () => {
+  const cols = (names: string[]) => ({ ...report([]), columnGroups: [{ id: 'cg', logicalTableName: 'PATIENTS', displayName: 'Age', listColumns: names.map((displayName) => ({ displayName })), criteria: [] }] }) as unknown as EmisReport;
+  const rules = diffRules(cols([]), cols(['AGE']), ctx);
+  assert.equal(rules[0].columns?.from, '');
+  assert.equal(rules[0].status, 'changed');
+  assert.equal(ruleChangeKind(rules), 'logic');
+});

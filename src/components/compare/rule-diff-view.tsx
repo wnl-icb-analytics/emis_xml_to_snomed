@@ -34,7 +34,7 @@ const ROW: Record<NodeStatus, { tint: string; bar: string; symbol: string; sign:
 
 /** Row text: edited characters marked, struck through when removed */
 function RowText({ row, plain }: { row: OutlineRow; plain: boolean }) {
-  if (!plain && row.from) return <InlineDiff parts={diffLineWords(row.from, row.text, true).parts} />;
+  if (!plain && row.from !== undefined) return <InlineDiff parts={diffLineWords(row.from, row.text, true).parts} />;
   return <span className={cn(!plain && row.status === 'removed' && 'line-through decoration-red-400')}>{row.text}</span>;
 }
 
@@ -222,12 +222,12 @@ const ruleTitle = (r: RuleDiff, total: number) => {
 
 /** Header-level changes, which get their own "next change" stop */
 const ruleHeadChanged = (r: RuleDiff) =>
-  r.status === 'added' || r.status === 'removed' || !!r.passFrom || !!r.failFrom || !!r.reordered || !!r.columns?.from;
+  r.status === 'added' || r.status === 'removed' || !!r.passFrom || !!r.failFrom || !!r.reordered || r.columns?.from !== undefined;
 
 function Actions({ r, compact = false }: { r: RuleDiff; compact?: boolean }) {
   const plain = useContext(PlainContext);
   if (r.columns) {
-    const edited = !plain && r.columns.from;
+    const edited = !plain && r.columns.from !== undefined;
     return (
       <span className={cn('text-xs', compact ? 'text-muted-foreground' : 'text-slate-300')}>
         Shows:{' '}

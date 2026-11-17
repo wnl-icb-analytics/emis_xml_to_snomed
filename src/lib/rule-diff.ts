@@ -311,7 +311,7 @@ function diffCriteria(bs: SearchCriterion[], ts: SearchCriterion[], bv: Viewer, 
       };
     });
     const own = [...filters, ...restrictions, ...tests];
-    const kept = own.filter((l) => l.status === 'unchanged' || (l.status === 'changed' && !l.from)).length;
+    const kept = own.filter((l) => l.status === 'unchanged' || (l.status === 'changed' && l.from === undefined)).length;
     if (firstList(b) && firstList(t) && firstList(b) !== firstList(t) && kept < own.length * REPLACE_KEPT_SHARE) {
       return [wholeCriterion(b.source, 'removed', bv), { ...wholeCriterion(t.source, 'added', tv), replaces: true }];
     }
@@ -442,7 +442,7 @@ export function ruleChangeKind(rules: RuleDiff[]): 'logic' | 'codes' | 'none' {
   let codes = false;
   const line = (l?: LineDiff) => {
     if (!l || l.status === 'unchanged') return false;
-    if (l.status === 'changed' && !l.from) {
+    if (l.status === 'changed' && l.from === undefined) {
       codes = true;
       return false;
     }

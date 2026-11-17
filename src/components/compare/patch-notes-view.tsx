@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { CalendarClock, ChevronDown, ChevronRight, Folder, Info, ListTree, Network, Sparkles } from 'lucide-react';
 import { buildPatchNotes, codeTally, RULES_OMITTED, type CodeNote, type DetailLine, type Highlight, type NoteGroup, type NoteLine, type PropertyNote, type SearchNote } from '@/lib/patch-notes';
 import type { PatchPart } from '@/lib/patch-view';
-import type { XmlDiffResult } from '@/lib/xml-diff';
+import type { SearchDiffEntry, XmlDiffResult } from '@/lib/xml-diff';
 import { useCompare } from '@/contexts/CompareContext';
 import { CodeTable, ConceptCompare, codeCounts, hasCodesToShow } from '@/components/compare/code-list-changes';
 import { DIFF, STATUS, SectionHeader, plural } from '@/components/compare/status';
@@ -236,16 +236,9 @@ function Reach({ note }: { note: SearchNote }) {
   );
 }
 
-/** Keys cards by search identity, so open folds follow the search when filters reorder the list */
-function cardKeys(notes: SearchNote[]): Array<[string, SearchNote]> {
-  const seen = new Map<string, number>();
-  return notes.map((n) => {
-    const base = [n.ref.type, n.ref.folder, n.ref.name, n.ref.parent ?? ''].join('|');
-    const k = seen.get(base) ?? 0;
-    seen.set(base, k + 1);
-    return [k ? `${base}|${k}` : base, n];
-  });
-}
+/** Keys cards by their entry's place in the full result, so card state follows the search through scope filtering */
+const cardKeys = (notes: SearchNote[], index: Map<SearchDiffEntry, number>): Array<[string, SearchNote]> =>
+  notes.map((n) => [`e${index.get(n.entry) ?? n.ref.name}`, n]);
 
 function SearchCard({ note, accent }: { note: SearchNote; accent: 'modified' | 'added' | 'removed' }) {
   const { select } = useCompare();
@@ -364,6 +357,7 @@ const HIGHLIGHT_ICON: Record<Highlight['kind'], typeof Info> = {
 export function PatchNotesView({ result, scopeOnly }: { result: XmlDiffResult; scopeOnly: boolean }) {
   const { selectByRef } = useCompare();
   const notes = useMemo(() => buildPatchNotes(result, { scopeOnly }), [result, scopeOnly]);
+  const index = useMemo(() => new Map(result.entries.map((e, i) => [e, i])), [result]);
   const removedCount = notes.removed.reduce((n, g) => n + g.searches.length, 0);
   return (
     <div className="space-y-8">
@@ -397,13 +391,13 @@ export function PatchNotesView({ result, scopeOnly }: { result: XmlDiffResult; s
       )}
 
       <Section title="Changed searches" count={notes.changed.length} hint="furthest-reaching first; year rollovers folded">
-        {cardKeys(notes.changed).map(([k, n]) => (
+        {cardKeys(notes.changed, index).map(([k, n]) => (
           <SearchCard key={k} note={n} accent="modified" />
         ))}
       </Section>
 
       <Section title="New searches" count={notes.added.length}>
-        {cardKeys(notes.added).map(([k, n]) => (
+        {cardKeys(notes.added, index).map(([k, n]) => (
           <SearchCard key={k} note={n} accent="added" />
         ))}
       </Section>

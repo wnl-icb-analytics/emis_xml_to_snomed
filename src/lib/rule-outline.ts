@@ -43,7 +43,7 @@ function lineRow(key: string, depth: number, kind: OutlineRow['kind'], l: LineDi
     kind,
     status: inherited ?? l.status,
     text: l.text,
-    ...(l.from && !inherited ? { from: l.from } : {}),
+    ...(l.from !== undefined && !inherited ? { from: l.from } : {}),
     ...(l.lists ? { lists: l.lists } : {}),
   };
 }

@@ -219,7 +219,7 @@ function walkRules(rules: RuleDiff[]) {
   const line = (l: LineDiff | undefined, where: string, note?: string) => {
     if (!l) return;
     used(l.lists, where);
-    if (l.status === 'changed' && l.from) {
+    if (l.status === 'changed' && l.from !== undefined) {
       lines.push({ where, kind: 'edit', parts: readableDelta(l.from, l.text), note: explainEdit(l.from, l.text), routine: isRollover(l.from, l.text) });
     } else if (l.status === 'added' || l.status === 'removed') {
       lines.push({ where, kind: l.status, parts: [eq(`${l.text}${codeCount(l.lists)}`)], ...(note ? { note } : {}) });
