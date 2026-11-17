@@ -70,7 +70,11 @@ npm run start
 
 ## Comparing search sets
 
-Compare mode diffs two shared XML files and shows what changed per search: properties (name, folder, description, parent), code changes by code list, library items, and a line diff of the implementation guide, so logic changes read in plain English.
+Compare mode diffs two shared XML files. Pick the older and newer file in the sidebar; changed searches are listed there by folder (`j` / `k` move through them). The overview shows status counts, code list changes across all searches, and a summary per modified search. Each search shows:
+
+- **Properties**: name, folder, description, parent and population criteria.
+- **Code lists**: each list added, removed or changed, with a plain-English summary (e.g. "Replaced 521 codes with refset 12463601000001108") and the codes behind it.
+- **Logic**: the implementation guide diff, one block per rule and criterion, with edited lines shown as word-level changes. Edits repeated on several lines (e.g. `01/04/2025` → `01/04/2026`) are summarised, identical blocks in different rules are shown once, and long runs of new or removed lines start folded.
 
 EMIS re-exports give every search, folder and parent a new GUID, so searches are matched on:
 
@@ -81,14 +85,18 @@ EMIS re-exports give every search, folder and parent a new GUID, so searches are
 5. Leftover duplicates: parent search via the matches so far, criteria group IDs, then code overlap of at least 0.5.
 6. Versioned replacements in the same folder (years normalised): the same bracketed search ID ignoring version tokens (`[ICS_HTN_21 v3 FYYTD]` → `[ICS_HTN_21 v4_NICE FYYTD]`), or name-token overlap of at least 0.5 plus a shared criterion or code. Tied candidates stay unmatched.
 
-Parent and population-criteria references are compared through these matches. References to searches outside both files produce a warning. Guide diffs map renamed searches' old names to new ones, so the diff shows logic changes only.
+Parent and population-criteria references are compared through these matches. References to searches outside both files produce a warning.
+
+Code lists within a matched search are paired by identical content, then cluster ID, then code overlap of at least 0.5, so a list renumbered from `_vs1` to `_vs4` is not a change. Before diffing the guides, old search names and code list names are mapped to the new ones, the code list table is dropped (code list changes cover it), and criterion labels (`Criterion B`, `A.3.1`) are ignored when aligning lines, so inserting a criterion does not mark every later one as changed.
+
+Most searches depend on a few shared registers, so the JSON lists the changed searches each changed or in-scope search depends on; for the rest it gives a count (`affected`).
 
 An optional scope file limits the view to searches you depend on. It takes a JSON array of `{ "folder", "name" }` rows, or an object with a `searches` array whose rows may carry `models` or `tags`. Searches that in-scope ones depend on (parents and population criteria, transitively) are flagged, and unchanged in-scope searches that depend on a changed search are listed with those changes. Scope rows found in neither file, or only under their old name, are listed for follow-up.
 
 Downloads:
 
-- **JSON** (`schemaVersion` 1): every search with its status; changed searches carry code lists, guide patches and, for added/removed searches, the full guide.
-- **Markdown**: summary, scope rows to check, folder moves, changed folders, impact by scope tag, added/removed lists, and per-search changes with `diff` blocks.
+- **JSON** (`schemaVersion` 2): every search with its status; matched searches carry `codeLists` (one summary per added, removed or changed list) and codes tagged with their `list`, guide patches whose hunk headers name the rule and criterion, and, for added/removed searches, the full guide.
+- **Markdown**: summary, scope rows to check, folder moves, changed folders, code list changes, impact by scope tag, added/removed lists, and per-search changes with code lists, repeated edits and `diff` blocks.
 
 `/api/xml-diff` keeps responses under 4 MB (Vercel's limit is 4.5 MB) by leaving out guides, then code lists, for added/removed searches. The command line has no limit.
 
