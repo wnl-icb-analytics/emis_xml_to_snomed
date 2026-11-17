@@ -195,7 +195,7 @@ export interface LibraryItemReferenceSummary {
   }>;
 }
 
-function codeSystemLabel(cs?: string): string {
+export function codeSystemLabel(cs?: string): string {
   switch (cs?.toUpperCase()) {
     case 'SNOMED_CONCEPT': return 'SNOMED';
     case 'SCT_CONST': return 'SCT Const';

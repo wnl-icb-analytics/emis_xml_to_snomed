@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/toaster';
 import LayoutWrapper from '@/components/layout-wrapper';
 import { AppModeProvider } from '@/contexts/AppModeContext';
 import { SettingsProvider } from '@/contexts/SettingsContext';
+import { CompareProvider } from '@/contexts/CompareContext';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -24,7 +25,9 @@ export default function RootLayout({
       <body className={inter.className}>
         <SettingsProvider>
           <AppModeProvider>
-            <LayoutWrapper>{children}</LayoutWrapper>
+            <CompareProvider>
+              <LayoutWrapper>{children}</LayoutWrapper>
+            </CompareProvider>
             <Toaster />
           </AppModeProvider>
         </SettingsProvider>

@@ -18,6 +18,7 @@ import ModeToggle from '@/components/mode-toggle';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { CodeExpansionDocs } from '@/components/code-expansion-docs';
 import { SettingsDialog } from '@/components/settings-dialog';
+import { CompareChangeList, CompareControls } from '@/components/compare/compare-sidebar';
 import { HelpCircle, Settings } from 'lucide-react';
 
 export function AppSidebar() {
@@ -61,33 +62,45 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>XML File</SidebarGroupLabel>
-          <SidebarGroupContent className="px-2">
-            <XmlUploader />
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <Separator />
         {mode === 'compare' ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>Compare</SidebarGroupLabel>
-            <SidebarGroupContent className="px-2 text-xs text-muted-foreground">
-              Pick a base and target from the shared XML files. Upload new files above.
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <>
+            <SidebarGroup>
+              <SidebarGroupLabel>Compare</SidebarGroupLabel>
+              <SidebarGroupContent className="space-y-2.5 px-2">
+                <CompareControls />
+                <XmlUploader uploadOnly />
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <Separator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Changed searches</SidebarGroupLabel>
+              <SidebarGroupContent className="px-2">
+                <CompareChangeList />
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
         ) : (
-          <SidebarGroup>
-            <SidebarGroupLabel>
-              {mode === 'explore' ? 'Search Reports' : 'Select Reports'}
-            </SidebarGroupLabel>
-            <SidebarGroupContent className="px-2">
-              {mode === 'explore' ? (
-                <FolderTreeNavigation />
-              ) : (
-                <BatchReportSelector />
-              )}
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <>
+            <SidebarGroup>
+              <SidebarGroupLabel>XML File</SidebarGroupLabel>
+              <SidebarGroupContent className="px-2">
+                <XmlUploader />
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <Separator />
+            <SidebarGroup>
+              <SidebarGroupLabel>
+                {mode === 'explore' ? 'Search Reports' : 'Select Reports'}
+              </SidebarGroupLabel>
+              <SidebarGroupContent className="px-2">
+                {mode === 'explore' ? (
+                  <FolderTreeNavigation />
+                ) : (
+                  <BatchReportSelector />
+                )}
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
         )}
       </SidebarContent>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

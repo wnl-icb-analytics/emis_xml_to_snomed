@@ -18,7 +18,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-export default function XmlUploader() {
+/** uploadOnly: drop zone only, for adding files to the shared list without opening them */
+export default function XmlUploader({ uploadOnly = false }: { uploadOnly?: boolean }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [hasStoredData, setHasStoredData] = useState(false);
@@ -97,7 +98,7 @@ export default function XmlUploader() {
       const file = acceptedFiles[0];
       if (!file) return;
 
-      setFileName(file.name);
+      if (!uploadOnly) setFileName(file.name);
       setIsProcessing(true);
 
       try {
@@ -110,15 +111,16 @@ export default function XmlUploader() {
           }),
         ]);
         const parsedData = await parseEmisXml(xmlContent);
-        const minimalData = buildMinimalParsedXmlData(parsedData, file.name);
 
-        await saveParsedXmlData(minimalData);
-        setSelectedBlobPath(buildXmlBlobPath(file.name));
-        await refreshBlobFiles();
-
-        window.dispatchEvent(
-          new CustomEvent('xml-parsed', { detail: parsedData })
-        );
+        if (uploadOnly) {
+          // Add to the shared list only; the file open in Explore stays as it is
+          window.dispatchEvent(new Event('xml-files-changed'));
+        } else {
+          await saveParsedXmlData(buildMinimalParsedXmlData(parsedData, file.name));
+          setSelectedBlobPath(buildXmlBlobPath(file.name));
+          await refreshBlobFiles();
+          window.dispatchEvent(new CustomEvent('xml-parsed', { detail: parsedData }));
+        }
 
         if (parsedData.reports.length === 0) {
           toast({
@@ -128,8 +130,10 @@ export default function XmlUploader() {
           });
         } else {
           toast({
-            title: 'Success',
-            description: `Loaded ${parsedData.reports.length} searches`,
+            title: uploadOnly ? 'Uploaded to shared files' : 'Success',
+            description: uploadOnly
+              ? `${file.name}: ${parsedData.reports.length} searches`
+              : `Loaded ${parsedData.reports.length} searches`,
           });
         }
       } catch (error) {
@@ -145,7 +149,7 @@ export default function XmlUploader() {
         setIsProcessing(false);
       }
     },
-    [toast]
+    [refreshBlobFiles, toast, uploadOnly]
   );
 
   const handleSelectBlob = async (pathname: string) => {
@@ -212,7 +216,7 @@ export default function XmlUploader() {
 
   return (
     <div className="space-y-2.5">
-      {showStatusRow && (
+      {showStatusRow && !uploadOnly && (
         <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/10 px-3 py-2">
           {isProcessing || isLoadingSelectedBlob ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary flex-shrink-0" />
@@ -229,6 +233,7 @@ export default function XmlUploader() {
         </div>
       )}
 
+      {!uploadOnly && (
       <div className="flex items-center gap-2">
         <Select value={selectedBlobPath} onValueChange={handleSelectBlob} disabled={isLoadingBlobFiles || isLoadingSelectedBlob}>
           <SelectTrigger className="h-8 flex-1 text-xs">
@@ -256,6 +261,7 @@ export default function XmlUploader() {
           </Button>
         )}
       </div>
+      )}
 
       <div
         {...getRootProps()}
@@ -274,9 +280,17 @@ export default function XmlUploader() {
             <Upload className="h-3.5 w-3.5 text-primary flex-shrink-0" />
           )}
           <span className={`text-xs ${isDragActive ? 'text-primary' : 'text-foreground/85'}`}>
-            {isProcessing ? 'Uploading and parsing...' : isDragActive ? 'Drop XML to upload or replace' : hasStoredData ? 'Upload replacement XML' : 'Upload XML file'}
+            {isProcessing
+              ? 'Uploading and parsing...'
+              : isDragActive
+                ? 'Drop XML to upload or replace'
+                : uploadOnly
+                  ? 'Upload XML to shared files'
+                  : hasStoredData
+                    ? 'Upload replacement XML'
+                    : 'Upload XML file'}
           </span>
-          {fileName && !isProcessing && !isLoadingSelectedBlob && (
+          {fileName && !uploadOnly && !isProcessing && !isLoadingSelectedBlob && (
             <span className="ml-auto truncate text-[11px] text-muted-foreground">
               {fileName}
             </span>
