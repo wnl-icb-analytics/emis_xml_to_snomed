@@ -1,10 +1,11 @@
-// Diffs two EMIS XML exports and writes JSON + Markdown.
+// Diffs two EMIS XML exports and writes JSON, Markdown and patch notes (<outPrefix>.patch-notes.md).
 // Usage: npx tsx scripts/diff-xml.ts <base.xml> <target.xml> <outPrefix> [scope.json] [scopeLabel]
 // Scope accepts [{folder, name}] or the dbt mapping JSON ({ searches: [{folder, name, models}] }).
 import fs from 'fs';
 import path from 'path';
 import { parseEmisXml } from '../src/lib/xml-parser';
 import { diffXmlDocuments, parseDiffScope, renderXmlDiffMarkdown } from '../src/lib/xml-diff';
+import { buildPatchNotes, renderPatchNotesMarkdown } from '../src/lib/patch-notes';
 
 async function main() {
   const [basePath, targetPath, outPrefix, scopePath, scopeLabel] = process.argv.slice(2);
@@ -22,6 +23,7 @@ async function main() {
 
   fs.writeFileSync(`${outPrefix}.json`, JSON.stringify(result, null, 2));
   fs.writeFileSync(`${outPrefix}.md`, renderXmlDiffMarkdown(result));
+  fs.writeFileSync(`${outPrefix}.patch-notes.md`, renderPatchNotesMarkdown(buildPatchNotes(result)));
   if (scope) fs.writeFileSync(`${outPrefix}.scope.md`, renderXmlDiffMarkdown(result, { scopeOnly: true }));
   console.log(JSON.stringify({ summary: result.summary, scope: result.scope, folderMoves: result.folderMoves.length }, null, 2));
 }

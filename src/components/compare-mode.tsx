@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertTriangle, ArrowRight, Download, GitCompare, Loader2 } from 'lucide-react';
 import {
+  codeListDetails,
   collectTerminologyChanges,
   entryRef,
   FIELD_LABEL,
@@ -18,14 +19,19 @@ import {
 import { diffLineWords, summarizeGuidePatch } from '@/lib/patch-view';
 import { slugifyFileName } from '@/lib/valueset-utils';
 import { downloadFile } from '@/lib/csv-utils';
-import { useCompare } from '@/contexts/CompareContext';
+import { useCompare, type ListFocus } from '@/contexts/CompareContext';
 import { markdownComponents } from '@/components/implementation-guide-view';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { CodeListChanges } from '@/components/compare/code-list-changes';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CodeListChanges, listKey } from '@/components/compare/code-list-changes';
+import { RuleDiffView } from '@/components/compare/rule-diff-view';
+import { PatchNotesView } from '@/components/compare/patch-notes-view';
+import { buildPatchNotes, renderPatchNotesMarkdown } from '@/lib/patch-notes';
+import { listRefsIn, ruleChangeKind } from '@/lib/rule-diff';
 import { EditChip, GuidePatchView, InlineDiff } from '@/components/compare/guide-patch-view';
-import { ListStatusBadge, MATCH_LABEL, STATUS, STATUS_ORDER, SectionHeader, StatusBadge, plural } from '@/components/compare/status';
+import { DIFF, ListStatusBadge, MATCH_LABEL, STATUS, STATUS_ORDER, SectionHeader, StatusBadge, plural } from '@/components/compare/status';
 import { cn } from '@/lib/utils';
 
 export default function CompareMode() {
@@ -81,18 +87,28 @@ function LoadingState() {
 }
 
 function Downloads({ result }: { result: XmlDiffResult }) {
+  const { scopeOnly } = useCompare();
   const name = `${slugifyFileName(result.base.label)}__vs__${slugifyFileName(result.target.label)}`;
   const md = (scopeOnly: boolean) =>
     downloadFile(renderXmlDiffMarkdown(result, { scopeOnly }), `${name}${scopeOnly ? '.scope' : ''}.diff.md`, 'text/markdown;charset=utf-8');
   return (
     <div className="flex shrink-0 gap-2">
+      <Button
+        size="sm"
+        onClick={() =>
+          downloadFile(renderPatchNotesMarkdown(buildPatchNotes(result, { scopeOnly })), `${name}${scopeOnly ? '.scope' : ''}.patch-notes.md`, 'text/markdown;charset=utf-8')
+        }
+      >
+        <Download className="mr-1 h-4 w-4" />
+        Patch notes
+      </Button>
       <Button variant="outline" size="sm" onClick={() => downloadFile(JSON.stringify(result, null, 2), `${name}.diff.json`, 'application/json')}>
         <Download className="mr-1 h-4 w-4" />
         JSON
       </Button>
       <Button variant="outline" size="sm" onClick={() => md(false)}>
         <Download className="mr-1 h-4 w-4" />
-        Markdown
+        Full Markdown
       </Button>
       {result.scope && (
         <Button variant="outline" size="sm" onClick={() => md(true)}>
@@ -114,19 +130,23 @@ function Notice({ children }: { children: React.ReactNode }) {
 }
 
 /** Clickable search name that opens its detail */
-function SearchLink({ r, className }: { r: SearchRef; className?: string }) {
+function SearchLink({ r, focus, className }: { r: SearchRef; focus?: ListFocus; className?: string }) {
   const { selectByRef } = useCompare();
   return (
-    <button type="button" onClick={() => selectByRef(r)} className={cn('text-left hover:text-primary hover:underline', className)}>
+    <button type="button" onClick={() => selectByRef(r, focus)} className={cn('text-left hover:text-primary hover:underline', className)}>
       {r.name}
     </button>
   );
 }
 
+/** Code list changes listed on the overview before "Show all" */
+const LIST_PREVIEW = 8;
+
 function Overview({ result }: { result: XmlDiffResult }) {
   const { counts, statuses, toggleStatus, scopeOnly } = useCompare();
   const entries = useMemo(() => (scopeOnly ? result.entries.filter((e) => e.scope) : result.entries), [result, scopeOnly]);
   const terminology = useMemo(() => collectTerminologyChanges(entries), [entries]);
+  const [allLists, setAllLists] = useState(false);
   const modified = useMemo(() => entries.filter((e) => e.status === 'modified'), [entries]);
   const addedRemoved = useMemo(() => {
     const m = new Map<string, { added: number; removed: number }>();
@@ -178,14 +198,14 @@ function Overview({ result }: { result: XmlDiffResult }) {
             title={`${STATUS[st].hint}. Click to show or hide in the list.`}
             className={cn(
               'rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-foreground/20',
-              !statuses.has(st) && 'opacity-50 shadow-none'
+              !statuses.has(st) && 'bg-muted text-muted-foreground shadow-none'
             )}
           >
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <span className={cn('h-2 w-2 rounded-full', STATUS[st].dot)} />
               {STATUS[st].label}
             </div>
-            <div className={cn('mt-1 text-2xl font-semibold tabular-nums', counts[st] ? STATUS[st].text : 'text-muted-foreground/50')}>
+            <div className={cn('mt-1 text-2xl font-semibold tabular-nums', counts[st] && statuses.has(st) ? STATUS[st].text : 'text-muted-foreground')}>
               {counts[st].toLocaleString()}
             </div>
           </button>
@@ -200,7 +220,8 @@ function Overview({ result }: { result: XmlDiffResult }) {
 
       {result.trimmed && (
         <Notice>
-          Large diff: guides for {result.trimmed.guides} and code lists for {result.trimmed.codeLists} added or removed searches were left out. Run{' '}
+          Large diff: guides for {result.trimmed.guides} and code lists for {result.trimmed.codeLists} added or removed searches were left out
+          {result.trimmed.rules ? `, and rule views for ${result.trimmed.rules} modified searches` : ''}. Run{' '}
           <code className="font-mono text-xs">scripts/diff-xml.ts</code> for the full output.
         </Notice>
       )}
@@ -233,6 +254,15 @@ function Overview({ result }: { result: XmlDiffResult }) {
         </Notice>
       )}
 
+      <Tabs defaultValue="notes" className="w-full">
+        <TabsList>
+          <TabsTrigger value="notes">Patch notes</TabsTrigger>
+          <TabsTrigger value="summary">Summary tables</TabsTrigger>
+        </TabsList>
+        <TabsContent value="notes" className="mt-4">
+          <PatchNotesView result={result} scopeOnly={scopeOnly} />
+        </TabsContent>
+        <TabsContent value="summary" className="mt-4 space-y-6">
       {terminology.length > 0 && (
         <Card className="shadow-sm">
           <SectionHeader title="Code list changes">{plural(terminology.length, 'change')}</SectionHeader>
@@ -246,7 +276,7 @@ function Overview({ result }: { result: XmlDiffResult }) {
                 </tr>
               </thead>
               <tbody>
-                {terminology.map((t) => (
+                {(allLists ? terminology : terminology.slice(0, LIST_PREVIEW)).map((t) => (
                   <tr key={`${t.status}${t.cluster}${t.summary}`} className="border-b border-border/50 align-top last:border-0">
                     <td className="whitespace-nowrap px-4 py-2 font-mono text-xs font-semibold">{t.cluster ?? <span className="font-sans font-normal text-muted-foreground">No cluster ID</span>}</td>
                     <td className="px-2 py-2">
@@ -257,13 +287,18 @@ function Overview({ result }: { result: XmlDiffResult }) {
                     </td>
                     <td className="px-4 py-2 text-xs">
                       {t.searches.map((r, i) => (
-                        <SearchLink key={i} r={r} className="block" />
+                        <SearchLink key={i} r={r} focus={{ cluster: t.cluster, summary: t.summary }} className="block" />
                       ))}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {terminology.length > LIST_PREVIEW && (
+              <button type="button" onClick={() => setAllLists(!allLists)} className="w-full border-t px-4 py-2 text-left text-xs text-primary hover:bg-muted">
+                {allLists ? 'Show fewer' : `Show all ${terminology.length} code list changes`}
+              </button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -314,6 +349,8 @@ function Overview({ result }: { result: XmlDiffResult }) {
           </Card>
         )}
       </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -325,6 +362,7 @@ function ModifiedRow({ e }: { e: SearchDiffEntry }) {
   const edits = summary?.edits.filter((x) => x.lines > 1).slice(0, 3) ?? [];
   const lines = summary ? summary.changed + summary.added + summary.removed : 0;
   const lists = e.codeLists ?? [];
+  const codesOnly = !!e.rules && ruleChangeKind(e.rules) === 'codes';
   return (
     <button type="button" onClick={() => select(e)} className="block w-full px-4 py-2.5 text-left transition-colors hover:bg-muted/40">
       <div className="truncate text-sm font-medium">{entryRef(e).name}</div>
@@ -335,10 +373,20 @@ function ModifiedRow({ e }: { e: SearchDiffEntry }) {
             {plural(lists.length, 'code list')}
           </Badge>
         )}
-        {lines > 0 && (
-          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
-            {plural(lines, 'logic line')}
+        {codesOnly ? (
+          <Badge
+            variant="outline"
+            className="h-5 border-sky-300 bg-sky-50 px-1.5 text-[10px] font-medium text-sky-700"
+            title="Rules and criteria are identical; only the codes inside a code list changed"
+          >
+            logic unchanged
           </Badge>
+        ) : (
+          lines > 0 && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
+              {plural(lines, 'logic line')}
+            </Badge>
+          )
         )}
         {(e.renamed || e.moved) && (
           <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
@@ -356,15 +404,13 @@ function ModifiedRow({ e }: { e: SearchDiffEntry }) {
 }
 
 function FieldValue({ f }: { f: FieldChange }) {
-  // Names and descriptions read best as one line with the edits marked
-  if ((f.field === 'name' || f.field === 'description') && f.from && f.to) {
-    return <InlineDiff parts={diffLineWords(f.from, f.to).parts} />;
-  }
+  // One line with only the edited characters marked; unrelated values fall back to old → new
+  if (f.from && f.to && f.field !== 'reportType') return <InlineDiff parts={diffLineWords(f.from, f.to, true).parts} />;
   return (
     <span className="flex flex-wrap items-center gap-x-2">
-      <span className="text-red-700 line-through decoration-red-400/60 dark:text-red-300">{f.from ?? '—'}</span>
+      {f.from ? <span className={DIFF.delText}>{f.from}</span> : <span className="text-muted-foreground">None</span>}
       <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-      <span className="text-emerald-700 dark:text-emerald-300">{f.to ?? '—'}</span>
+      {f.to ? <span className={DIFF.addText}>{f.to}</span> : <span className="text-muted-foreground">None</span>}
     </span>
   );
 }
@@ -379,6 +425,14 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
   const changedLines = patchSummary ? patchSummary.changed + patchSummary.added + patchSummary.removed : 0;
   const hasCodes = lists.length > 0 || e.codesChildrenChanged.length > 0;
   const hasLibrary = e.libraryItemsAdded.length > 0 || e.libraryItemsRemoved.length > 0;
+  // Searches in one file only: rules and code lists drawn as they are, guide in full
+  const whole = e.status === 'added' || e.status === 'removed';
+  const hasGuide = whole ? !!(e.guide || e.guideOmitted) : !!e.guidePatch;
+  const codesOnly = !!e.rules && !whole && ruleChangeKind(e.rules) === 'codes';
+  const details = useMemo(() => codeListDetails(e), [e]);
+  // Lists the rules show in place; the Code lists card keeps the rest
+  const inline = useMemo(() => new Set(listRefsIn(e.rules ?? []).map((l) => listKey(l.name, l.cluster))), [e]);
+  const otherLists = details.filter((l) => !inline.has(listKey(l.name, l.cluster)));
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-6 p-6">
@@ -404,7 +458,7 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
           {e.dependents > 0 && <span>{plural(e.dependents, 'dependent search', 'dependent searches')}</span>}
           {e.scope && <span>{e.scope === 'direct' ? 'In scope' : 'In scope as a dependency'}</span>}
           {e.scopeTags?.map((t) => (
-            <Badge key={t} variant="outline" className="h-5 bg-primary/5 px-1.5 font-mono text-[11px] font-normal text-primary">
+            <Badge key={t} variant="outline" className="h-5 border-slate-300 bg-slate-100 px-1.5 font-mono text-[11px] font-normal text-slate-700">
               {t}
             </Badge>
           ))}
@@ -433,35 +487,72 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
         </Card>
       )}
 
-      {hasCodes && (
-        <Card className="shadow-sm">
-          <SectionHeader title="Code lists">{plural(lists.length, 'list')} changed</SectionHeader>
-          <CardContent className="pt-4">
-            <CodeListChanges entry={e} />
-          </CardContent>
-        </Card>
+      {edits.length > 0 && (
+        <div className="-mb-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="mr-1">Same edit on several lines:</span>
+          {edits.map((x) => (
+            <EditChip key={`${x.from}>${x.to}`} edit={x} />
+          ))}
+        </div>
       )}
 
-      {e.guidePatch && (
-        <Card className="shadow-sm">
-          <SectionHeader title="Logic">
-            {plural(changedLines, 'line')} in {plural(patchSummary?.sections.length ?? 0, 'section')}
-          </SectionHeader>
-          <CardContent className="space-y-4 pt-4">
-            {edits.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="mr-1">Same edit on several lines:</span>
-                {edits.map((x) => (
-                  <EditChip key={`${x.from}>${x.to}`} edit={x} />
-                ))}
-              </div>
+      {(e.rules || e.rulesOmitted || hasGuide || hasCodes) && (
+        <Tabs defaultValue={e.rules || e.rulesOmitted || hasCodes ? 'rules' : 'guide'} className="w-full">
+          <TabsList>
+            <TabsTrigger value="rules" disabled={!e.rules && !e.rulesOmitted && !hasCodes}>
+              Rules & codes
+            </TabsTrigger>
+            <TabsTrigger value="guide" disabled={!hasGuide}>
+              Implementation guide
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="rules" className="mt-4 space-y-6">
+            {whole && (
+              <p className="text-sm text-muted-foreground">
+                {e.status === 'added' ? 'Only in the newer file. Rules and code lists as they appear there.' : 'Only in the older file. Rules and code lists as they were.'}
+              </p>
             )}
-            <GuidePatchView patch={e.guidePatch} />
-          </CardContent>
-        </Card>
+            {codesOnly && (
+              <p className="text-sm text-muted-foreground">Rules and criteria are identical; only the codes inside a code list changed.</p>
+            )}
+            {e.rules && <RuleDiffView rules={e.rules} plain={whole} lists={details} />}
+            {e.rulesOmitted && <p className="text-sm text-muted-foreground">Rules left out to keep the response small. See the implementation guide tab.</p>}
+            {otherLists.length > 0 && (
+              <Card className="shadow-sm">
+                <SectionHeader title={e.rules ? 'Code lists not used by a rule' : 'Code lists'}>
+                  {plural(otherLists.length, 'list')}
+                  {e.codesOmitted !== undefined && ` · ${e.codesOmitted.toLocaleString()} codes left out`}
+                </SectionHeader>
+                <CardContent className="pt-4">
+                  <CodeListChanges entry={e} exclude={inline} />
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+          {hasGuide && (
+            <TabsContent value="guide" className="mt-4">
+              <Card className="shadow-sm">
+                <SectionHeader title="Implementation guide">
+                  {whole ? (e.status === 'added' ? 'newer file' : 'older file') : `${plural(changedLines, 'line')} in ${plural(patchSummary?.sections.length ?? 0, 'section')}`}
+                </SectionHeader>
+                <CardContent className="pt-4">
+                  {!whole && e.guidePatch && <GuidePatchView patch={e.guidePatch} />}
+                  {whole && e.guide && (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {e.guide}
+                    </ReactMarkdown>
+                  )}
+                  {whole && !e.guide && (
+                    <p className="text-sm text-muted-foreground">Guide left out to keep the response small. Open the file in Explore to read it.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+        </Tabs>
       )}
 
-      {hasLibrary && (
+      {hasLibrary && !e.rules && (
         <Card className="shadow-sm">
           <SectionHeader title="EMIS library items" />
           <CardContent className="space-y-1 pt-4 font-mono text-xs">
@@ -504,24 +595,6 @@ function EntryDetail({ entry: e }: { entry: SearchDiffEntry }) {
       {e.status === 'moved' && <p className="text-sm text-muted-foreground">Only the folder changed; the logic and code lists are identical.</p>}
       {e.status === 'renamed' && <p className="text-sm text-muted-foreground">Only the name changed; the logic and code lists are identical.</p>}
 
-      {(e.guide || e.guideOmitted) && (
-        <Card className="shadow-sm">
-          <SectionHeader title={e.status === 'added' ? 'New search' : 'Removed search'}>
-            {e.codesOmitted !== undefined && `${e.codesOmitted.toLocaleString()} codes left out`}
-          </SectionHeader>
-          <CardContent className="pt-4">
-            {e.guide ? (
-              <div className={cn('border-l-2 pl-4', e.status === 'added' ? 'border-emerald-500' : 'border-red-500')}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {e.guide}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Guide left out to keep the response small. Open the file in Explore to read it.</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

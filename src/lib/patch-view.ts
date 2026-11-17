@@ -7,7 +7,7 @@ import { diffArrays } from 'diff';
 export type PatchPart = { text: string; op: 'eq' | 'add' | 'del' };
 export type PatchRow =
   | { kind: 'context' | 'add' | 'del'; text: string }
-  | { kind: 'change'; parts: PatchPart[] };
+  | { kind: 'change'; parts: PatchPart[]; from: string; to: string };
 export interface PatchHunk {
   /** Guide section the hunk sits in, e.g. "Rule 2 of 4 — Exclusion · Criterion B" */
   section: string;
@@ -24,14 +24,23 @@ const MAX_EDIT_LENGTH = 60;
 const MAX_INSERT_LENGTH = 24;
 const LIST_NAME = /^[a-z0-9_]+_vs\d+$/;
 
-// Punctuation is split off so "c7." vs "c7;" marks the full stop, not the whole GUID
+// Words, with punctuation split off so "c7." vs "c7;" marks the full stop, not the whole GUID.
+// Used to pair lines and summarise edits.
 const tokenize = (s: string) => s.split(/(\s+|[.,;:()`])/).filter(Boolean);
-const isSpace = (s: string) => !s.trim();
+// Display tokens: letters, digits and punctuation apart, so "APR25" → "APR26" marks only the digits
+const fineTokens = (s: string) => s.match(/[A-Za-z]+|\d+|\s+|[<>=!]+|[^A-Za-z\d\s]/g) ?? [];
 const isWord = (s: string) => /[\p{L}\p{N}]/u.test(s);
+/** Space or up to 3 punctuation characters between two edits, e.g. the "-" in "2025-26" */
+const isJoiner = (s: string) => !isWord(s) && s.trim().length <= 3;
 
-/** Word-level diff; whitespace between two changed words is folded into the change */
-export function diffLineWords(a: string, b: string): { parts: PatchPart[]; similarity: number } {
-  const changes = diffArrays(tokenize(a), tokenize(b));
+/**
+ * Word-level diff; short separators between two edits are folded into them.
+ * `fine` splits letters from digits for display, and falls back to a whole replacement when the
+ * two texts share less than half their words.
+ */
+export function diffLineWords(a: string, b: string, fine = false): { parts: PatchPart[]; similarity: number } {
+  const split = fine ? fineTokens : tokenize;
+  const changes = diffArrays(split(a), split(b));
   let same = 0;
   let total = 0;
   const raw: PatchPart[] = [];
@@ -54,7 +63,7 @@ export function diffLineWords(a: string, b: string): { parts: PatchPart[]; simil
   raw.forEach((p, i) => {
     if (p.op === 'del') del += p.text;
     else if (p.op === 'add') add += p.text;
-    else if ((del || add) && isSpace(p.text) && raw[i + 1] && raw[i + 1].op !== 'eq') {
+    else if ((del || add) && isJoiner(p.text) && raw[i + 1] && raw[i + 1].op !== 'eq') {
       del += p.text;
       add += p.text;
     } else {
@@ -63,7 +72,11 @@ export function diffLineWords(a: string, b: string): { parts: PatchPart[]; simil
     }
   });
   flush();
-  return { parts, similarity: total ? same / total : 1 };
+  const similarity = total ? same / total : 1;
+  if (fine && similarity < PAIR_SIMILARITY && a !== b) {
+    return { parts: [{ text: a, op: 'del' }, { text: b, op: 'add' }].filter((p) => p.text) as PatchPart[], similarity };
+  }
+  return { parts, similarity };
 }
 
 export function parseGuidePatch(patch: string): PatchHunk[] {
@@ -91,7 +104,7 @@ export function parseGuidePatch(patch: string): PatchHunk[] {
         continue;
       }
       for (; j < k; j++) cur.rows.push({ kind: 'add', text: adds[j] });
-      cur.rows.push({ kind: 'change', parts: diff.parts });
+      cur.rows.push({ kind: 'change', parts: diffLineWords(d, adds[k], true).parts, from: d, to: adds[k] });
       j = k + 1;
     }
     for (; j < adds.length; j++) cur.rows.push({ kind: 'add', text: adds[j] });
@@ -171,10 +184,12 @@ export function summarizeGuidePatch(patch: string): PatchSummary {
       if (row.kind !== 'change') continue;
       out.changed++;
       const seen = new Set<string>();
-      row.parts.forEach((p, i) => {
-        if (p.op === 'eq' || (p.op === 'add' && row.parts[i - 1]?.op === 'del')) return;
+      // Whole words, so the summary reads "01/04/2025 → 01/04/2026" rather than "2025 → 2026"
+      const parts = diffLineWords(row.from, row.to).parts;
+      parts.forEach((p, i) => {
+        if (p.op === 'eq' || (p.op === 'add' && parts[i - 1]?.op === 'del')) return;
         const from = p.op === 'del' ? trimEdit(p.text) : '';
-        const to = p.op === 'del' ? (row.parts[i + 1]?.op === 'add' ? trimEdit(row.parts[i + 1].text) : '') : trimEdit(p.text);
+        const to = p.op === 'del' ? (parts[i + 1]?.op === 'add' ? trimEdit(parts[i + 1].text) : '') : trimEdit(p.text);
         if ((!from && !to) || from === to || from.length > MAX_EDIT_LENGTH || to.length > MAX_EDIT_LENGTH) return;
         if ((!from || !to) && (from || to).length > MAX_INSERT_LENGTH) return;
         // Code list names (name_vsN) change with their list, which the cluster edit and code list changes already show
