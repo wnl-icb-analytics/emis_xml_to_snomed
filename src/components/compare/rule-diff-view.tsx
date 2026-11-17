@@ -133,10 +133,15 @@ function Row({ row, flash }: { row: OutlineRow; flash: boolean }) {
         {row.joiner && <span className="rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-500">{row.joiner}</span>}
         {row.linked && <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-blue-500" aria-label="Linked criterion" />}
         <span className={cn(folded ? 'text-muted-foreground' : 'font-semibold', !plain && row.status === 'removed' && 'line-through decoration-red-400')}>
-          {folded && (row.count ?? 1) > 1 ? `${row.count} criteria: ${row.text}` : row.text}
+          {folded && (row.count ?? 1) > 1 ? `${row.count} criteria: ${row.text}` : <RowText row={row} plain={plain} />}
         </span>
+        {!folded && row.tableFrom && !plain && (
+          <Badge variant="outline" className={cn(TABLE_BADGE, 'line-through')} title="Data source before">
+            {row.tableFrom}
+          </Badge>
+        )}
         {!folded && (
-          <Badge variant="outline" className={TABLE_BADGE}>
+          <Badge variant="outline" className={cn(TABLE_BADGE, row.tableFrom && !plain && 'border-amber-300 bg-amber-100 text-amber-900')}>
             {row.table}
           </Badge>
         )}
@@ -165,7 +170,7 @@ function Row({ row, flash }: { row: OutlineRow; flash: boolean }) {
           <Icon className={cn('h-3.5 w-3.5 shrink-0', row.kind === 'relationship' ? 'text-blue-500' : row.kind === 'library' ? 'text-amber-500' : 'text-muted-foreground')} />
         )}
         {row.kind === 'test' && <span className="text-xs text-muted-foreground">Test the kept record:</span>}
-        {row.kind !== 'test' && (
+        {(row.kind !== 'test' || !row.lists?.some((l) => l.cluster)) && (
           <span className={cn(row.kind === 'relationship' && 'text-blue-700', row.kind === 'restriction' && 'text-indigo-700')}>
             <RowText row={row} plain={plain} />
           </span>
@@ -215,9 +220,27 @@ const ruleTitle = (r: RuleDiff, total: number) => {
   return `Rule ${r.number}${role}${r.previousNumber ? ` · was Rule ${r.previousNumber}` : ''}`;
 };
 
+/** Header-level changes, which get their own "next change" stop */
+const ruleHeadChanged = (r: RuleDiff) =>
+  r.status === 'added' || r.status === 'removed' || !!r.passFrom || !!r.failFrom || !!r.reordered || !!r.columns?.from;
+
 function Actions({ r, compact = false }: { r: RuleDiff; compact?: boolean }) {
   const plain = useContext(PlainContext);
-  if (r.columns) return <span className={cn('text-xs', compact ? 'text-muted-foreground' : 'text-slate-300')}>Shows: {r.columns.text}</span>;
+  if (r.columns) {
+    const edited = !plain && r.columns.from;
+    return (
+      <span className={cn('text-xs', compact ? 'text-muted-foreground' : 'text-slate-300')}>
+        Shows:{' '}
+        {edited ? (
+          <span className="rounded bg-card px-1 text-foreground">
+            <InlineDiff parts={diffLineWords(r.columns.from!, r.columns.text, true).parts} />
+          </span>
+        ) : (
+          r.columns.text
+        )}
+      </span>
+    );
+  }
   const badge = (action?: string, was?: string) =>
     action && (
       <>
@@ -258,7 +281,7 @@ function RuleBlock({ rule: r, index, total, mode, flashKey }: { rule: RuleDiff; 
       </button>
     );
   }
-  const headChange = !plain && (r.status === 'added' || r.status === 'removed' || !!r.passFrom || !!r.failFrom);
+  const headChange = !plain && ruleHeadChanged(r);
   return (
     <Card
       data-change-row={headChange ? `${index}:head` : undefined}
@@ -273,6 +296,11 @@ function RuleBlock({ rule: r, index, total, mode, flashKey }: { rule: RuleDiff; 
         <div className="flex items-center gap-2">
           <span className={cn('text-sm font-semibold', !plain && r.status === 'removed' && 'line-through decoration-red-300')}>{ruleTitle(r, total)}</span>
           {!plain && r.status !== 'unchanged' && <ListStatusBadge status={r.status} />}
+          {!plain && r.reordered && (
+            <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-900" title="Rules run in order, so moving one can change who is kept">
+              Moved
+            </span>
+          )}
         </div>
         <Actions r={r} />
       </div>
@@ -352,7 +380,7 @@ export function RuleDiffView({
     return rules.flatMap((r, i) => {
       if (r.status === 'unchanged') return [];
       if (r.status === 'added' || r.status === 'removed') return [`${i}:head`];
-      const head = r.passFrom || r.failFrom ? [`${i}:head`] : [];
+      const head = ruleHeadChanged(r) ? [`${i}:head`] : [];
       const rows = outlineRule(r, mode);
       const starts = changeStarts(rows);
       return [...head, ...rows.filter((row) => starts.has(row.key)).map((row) => `${i}:${row.key}`)];

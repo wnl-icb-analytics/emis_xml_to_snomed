@@ -90,7 +90,11 @@ export interface SearchNote {
   editNotes: Record<string, string>;
   /** Every change is a year rollover */
   routineOnly: boolean;
+  /** Rules were dropped from the result to fit a size limit, so none are listed */
+  rulesOmitted?: boolean;
 }
+
+export const RULES_OMITTED = 'Rules left out to keep the response small; see the implementation guide';
 
 export interface Highlight {
   kind: 'reach' | 'edit' | 'codes' | 'folder' | 'routine';
@@ -138,11 +142,12 @@ export function readableDelta(from: string, to: string): PatchPart[] {
     const add = parts[i].op === 'add' ? parts[i] : parts[i + 1]?.op === 'add' ? parts[i + 1] : undefined;
     const end = add && add !== parts[i] ? i + 1 : i;
     const next = parts[end + 1];
-    if (!hasWord(del?.text ?? '') && !hasWord(add?.text ?? '') && next?.op === 'eq') {
+    // Widening a one-sided edit would drop the word from the side that has no part
+    if (del && add && !hasWord(del.text) && !hasWord(add.text) && next?.op === 'eq') {
       const word = next.text.match(/^\s*[^\s,;]+/)?.[0];
       if (word) {
-        if (del) del.text += word;
-        if (add) add.text += word;
+        del.text += word;
+        add.text += word;
         next.text = next.text.slice(word.length);
       }
     }
@@ -256,6 +261,10 @@ function walkRules(rules: RuleDiff[]) {
     if (c.negationFrom !== undefined) {
       lines.push({ where, kind: 'edit', parts: [eq('Negation: '), ...swap(c.negationFrom ? 'NOT' : 'none', c.negation ? 'NOT' : 'none')], note: explainNegation(c.negation) });
     }
+    if (c.tableFrom !== undefined) {
+      lines.push({ where, kind: 'edit', parts: [eq('Data source: '), ...swap(c.tableFrom, c.table)], note: 'Now searches a different table of records' });
+    }
+    if (c.nameFrom !== undefined) lines.push({ where, kind: 'edit', parts: [eq('Criterion: '), ...readableDelta(c.nameFrom, c.name)] });
     // Two filters on the same column must both match one record; dropping one fixes a criterion that likely matched nobody
     const count = (texts: string[], label: string) => texts.filter((t) => filterLabel(t) === label).length;
     const before = c.filters.filter((l) => l.status !== 'added').map((l) => l.from ?? l.text);
@@ -293,6 +302,14 @@ function walkRules(rules: RuleDiff[]) {
       listRefsIn([r]).forEach((l) => used([l], rl));
       lines.push({ where: rl, kind: r.status, parts: [eq(`${rl} · ${ruleActions(r)}`)], detail: detailOf(outlineRule(r, 'full')) });
       continue;
+    }
+    if (r.reordered) {
+      lines.push({
+        where: rl,
+        kind: 'edit',
+        parts: r.previousNumber ? [eq('Order: '), ...swap(`Rule ${r.previousNumber}`, `Rule ${r.number}`)] : [eq('Order: moved relative to the other rules')],
+        note: 'Rules run in order, so moving one can change who is kept',
+      });
     }
     if (r.passFrom) lines.push({ where: rl, kind: 'edit', parts: [eq('Pass: '), ...swap(action(r.passFrom), action(r.pass))], note: explainAction('pass', r.passFrom, r.pass!) });
     if (r.failFrom) lines.push({ where: rl, kind: 'edit', parts: [eq('Fail: '), ...swap(action(r.failFrom), action(r.fail))], note: explainAction('fail', r.failFrom, r.fail!) });
@@ -362,7 +379,7 @@ function properties(e: SearchDiffEntry): PropertyNote[] {
   return e.fieldChanges.map((f) => ({
     label: FIELD_LABEL[f.field],
     parts: f.from && f.to && f.field !== 'reportType' ? diffLineWords(f.from, f.to, true).parts : swap(f.from ?? 'none', f.to ?? 'none'),
-    routine: (f.field === 'name' || f.field === 'folder') && !!f.from && !!f.to && isRollover(f.from, f.to),
+    routine: (f.field === 'name' || f.field === 'folder') && !!f.from && !!f.to && isRollover(f.from, f.to, true),
   }));
 }
 
@@ -385,10 +402,11 @@ function changedNote(e: SearchDiffEntry): SearchNote {
   }
   const { groups, rest } = groupEdits(lines, pairsOf);
   const kind = e.rules ? ruleChangeKind(e.rules) : 'logic';
+  const omitted = !!e.rulesOmitted;
   const codes = codeNotes(e, listWhere);
   const props = properties(e);
   const tags = [
-    kind === 'codes' && 'Logic unchanged, codes only',
+    kind === 'codes' && !omitted && 'Logic unchanged, codes only',
     e.renamed && 'Renamed',
     e.moved && 'Moved',
     reachTag(e),
@@ -397,6 +415,7 @@ function changedNote(e: SearchDiffEntry): SearchNote {
   const edits = new Map<string, [string, string]>();
   const editNotes: Record<string, string> = {};
   for (const [l, pairs] of pairsOf) {
+    if (l.routine) continue;
     const note = explainEdit(beforeText(l.parts), afterText(l.parts), true);
     for (const p of pairs) {
       const k = p.join('\u0000');
@@ -416,7 +435,8 @@ function changedNote(e: SearchDiffEntry): SearchNote {
     codes,
     edits: [...edits.values()],
     editNotes,
-    routineOnly: !codes.length && items.length > 0 && items.every((x) => x.routine),
+    routineOnly: !omitted && !codes.length && items.length > 0 && items.every((x) => x.routine),
+    ...(omitted ? { rulesOmitted: true } : {}),
   };
 }
 
@@ -441,6 +461,7 @@ function wholeNote(e: SearchDiffEntry): SearchNote {
     edits: [],
     editNotes: {},
     routineOnly: false,
+    ...(e.rulesOmitted ? { rulesOmitted: true } : {}),
   };
 }
 
@@ -464,7 +485,6 @@ function highlights(
   changed: SearchNote[],
   routine: SearchNote[],
   terminology: TerminologyChange[],
-  result: XmlDiffResult,
   entries: SearchDiffEntry[]
 ): Highlight[] {
   const out: Highlight[] = [];
@@ -505,7 +525,16 @@ function highlights(
   };
   for (const [folder, n] of byFolder('added')) out.push({ kind: 'folder', parts: [eq(`${plural(n, 'new search', 'new searches')}`)], detail: `in ${folder || '(root)'}` });
   for (const [folder, n] of byFolder('removed')) out.push({ kind: 'folder', parts: [eq(`${plural(n, 'search', 'searches')} removed`)], detail: `from ${folder || '(root)'}` });
-  const moves = result.folderMoves.filter((m) => !isRollover(m.from, m.to));
+  // From the entries in view, so a scoped report lists only its own moves
+  const byMove = new Map<string, { from: string; to: string; searches: number }>();
+  for (const e of entries) {
+    if (!e.moved || !e.base || !e.target || isRollover(e.base.folder, e.target.folder, true)) continue;
+    const k = `${e.base.folder}\u0000${e.target.folder}`;
+    const m = byMove.get(k) ?? { from: e.base.folder, to: e.target.folder, searches: 0 };
+    m.searches++;
+    byMove.set(k, m);
+  }
+  const moves = [...byMove.values()].sort((a, b) => b.searches - a.searches);
   for (const m of moves) out.push({ kind: 'folder', parts: [eq('Folder: '), ...diffLineWords(m.from, m.to, true).parts], detail: plural(m.searches, 'search', 'searches') });
   // Rollovers within otherwise changed searches count too
   const rolled = new Set([...routine, ...changed.filter((n) => [...n.properties, ...n.groups, ...n.lines].some((x) => x.routine))].map((n) => n.ref.name));
@@ -534,7 +563,7 @@ export function buildPatchNotes(result: XmlDiffResult, opts: { scopeOnly?: boole
     title: `${result.base.label} → ${result.target.label}`,
     subtitle: `${result.base.fileName} → ${result.target.fileName}`,
     counts,
-    highlights: highlights(changed, routine, collectTerminologyChanges(entries), result, entries),
+    highlights: highlights(changed, routine, collectTerminologyChanges(entries), entries),
     changed,
     added: entries.filter((e) => e.status === 'added').map(wholeNote).sort(byReach),
     removed: [...removed].map(([folder, searches]) => ({ folder, searches })),
@@ -644,6 +673,7 @@ export function renderPatchNotesMarkdown(notes: PatchNotes): string {
         n.lines.filter((l) => l.routine).forEach((l) => out.push(...mdLine(l)));
         out.push('', '  </details>', '');
       }
+      if (n.rulesOmitted) out.push(`- _${RULES_OMITTED}._`);
       if (n.codes.length) {
         out.push('', '**Code lists**', '');
         n.codes.forEach((x) => out.push(...mdCodes(x, false)));
@@ -660,7 +690,8 @@ export function renderPatchNotesMarkdown(notes: PatchNotes): string {
         out.push(`- **${esc(r.title)}** · ${esc(r.actions)}`);
         out.push(...mdDetail(r.lines, '  '));
       }
-      if (!n.rules?.length) out.push('- No rules of its own; it reports on its parent population.');
+      if (n.rulesOmitted) out.push(`- _${RULES_OMITTED}._`);
+      else if (!n.rules?.length) out.push('- No rules of its own; it reports on its parent population.');
       if (n.codes.length) {
         out.push('', '**Code lists**', '');
         n.codes.forEach((x) => out.push(...mdCodes(x, true)));

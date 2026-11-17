@@ -19,6 +19,8 @@ export interface OutlineRow {
   /** Older text, for edited rows */
   from?: string;
   table?: string;
+  /** Older table, when the data source changed */
+  tableFrom?: string;
   negation?: boolean;
   negationFrom?: boolean;
   /** Operator joining this criterion to the one before it */
@@ -61,14 +63,17 @@ function criterionRows(
     return;
   }
   const negationChanged = !own && c.negationFrom !== undefined;
+  const headChanged = !own && (negationChanged || c.nameFrom !== undefined || c.tableFrom !== undefined);
   out.push({
     key,
     depth,
     kind: 'criterion',
-    status: own ?? (negationChanged ? 'changed' : 'unchanged'),
+    status: own ?? (headChanged ? 'changed' : 'unchanged'),
     ...(own && !opts.inherited ? { mark: own } : {}),
     text: c.name,
+    ...(!own && c.nameFrom !== undefined ? { from: c.nameFrom } : {}),
     table: c.table,
+    ...(!own && c.tableFrom !== undefined ? { tableFrom: c.tableFrom } : {}),
     negation: c.negation,
     ...(negationChanged ? { negationFrom: c.negationFrom } : {}),
     ...base,

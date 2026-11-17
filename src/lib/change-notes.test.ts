@@ -15,6 +15,13 @@ test('a rollover is routine only when nothing else changed', () => {
   assert.ok(!isRollover('Since Apr 25- % on HTN REG', 'Since Apr 26- %on HTN REG'));
   // A threshold of 25 is not a year
   assert.ok(!isRollover('BMI >= 25', 'BMI >= 26'));
+  // Nor is one that looks like a year
+  assert.ok(!isRollover('Numeric value >= 2000', 'Numeric value >= 2001'));
+  assert.ok(isRollover('QOF 2025-26', 'QOF 2026-27'));
+  assert.ok(isRollover('FY2025 PCN', 'FY2026 PCN'));
+  // Names and folders may carry a bare year
+  assert.ok(!isRollover('QOF 2025', 'QOF 2026'));
+  assert.ok(isRollover('QOF 2025', 'QOF 2026', true));
 });
 
 test('explainEdit names common rule changes', () => {
@@ -26,6 +33,9 @@ test('explainEdit names common rule changes', () => {
     'Window now includes its boundary day'
   );
   assert.equal(explainEdit('Date on or after 1 year before the search date', 'Date on or after 2 years before the search date'), 'Look-back widened from 1 year to 2 years');
+  // An upper bound moved further back leaves fewer records
+  assert.equal(explainEdit('Date on or before 6 months before the search date', 'Date on or before 12 months before the search date'), 'Look-back narrowed from 6 months to 12 months');
+  assert.equal(explainEdit('Date on or after 6 months before the search date', 'Date on or before 12 months before the search date'), undefined);
   assert.equal(explainEdit('Date on or after 01/04/2025', 'Date on or after 01/04/2026'), 'Moved on a year');
   assert.equal(explainEdit('Keep the latest 1 by date', 'Keep the earliest 1 by date'), 'Now uses the earliest record instead of the latest');
   assert.equal(explainEdit('Code in COPD_COD', 'Code in COPDDIAG_COD'), 'Now uses COPDDIAG_COD instead of COPD_COD');

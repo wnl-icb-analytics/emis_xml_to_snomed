@@ -34,7 +34,11 @@ export interface LineDiff {
 export interface CriterionDiff {
   status: NodeStatus;
   name: string;
+  /** Older name, when it changed */
+  nameFrom?: string;
   table: string;
+  /** Older table (data source), when it changed */
+  tableFrom?: string;
   negation: boolean;
   /** Older negation, when it changed */
   negationFrom?: boolean;
@@ -56,6 +60,8 @@ export interface RuleDiff {
   /** Position in the newer search, or the older one for removed rules */
   number: number;
   previousNumber?: number;
+  /** Moved relative to the other matched rules; rules run in order, so this can change the result */
+  reordered?: boolean;
   /** Column group name; empty for rules */
   label: string;
   operator: string;
@@ -318,7 +324,9 @@ function diffCriteria(bs: SearchCriterion[], ts: SearchCriterion[], bv: Viewer, 
       {
         status,
         name: t.name,
+        ...(b.name !== t.name ? { nameFrom: b.name } : {}),
         table: t.table,
+        ...(b.table !== t.table ? { tableFrom: b.table } : {}),
         negation: t.negation,
         ...(negationChanged ? { negationFrom: b.negation } : {}),
         ...(relationship ? { relationship } : {}),
@@ -339,6 +347,29 @@ const groupsOf = (r: EmisReport): Group[] => [
   ...(r.columnGroups ?? []).map((g, i) => ({ kind: 'column' as const, g, n: i + 1 })),
 ];
 
+/**
+ * Matched rules that changed order relative to each other: those outside the longest run kept in
+ * older order. A rule added or removed only renumbers the others, so it moves none.
+ */
+function movedRules(pairs: Array<{ b?: Group; t?: Group }>): Set<Group> {
+  const kept = pairs.filter((p): p is { b: Group; t: Group } => !!p.b && !!p.t && p.b.kind === 'rule');
+  const n = kept.map((p) => p.b.n);
+  // O(n²) longest increasing subsequence; searches have a handful of rules
+  const len = n.map(() => 1);
+  const prev = n.map(() => -1);
+  n.forEach((x, i) => {
+    for (let j = 0; j < i; j++) {
+      if (n[j] < x && len[j] + 1 > len[i]) {
+        len[i] = len[j] + 1;
+        prev[i] = j;
+      }
+    }
+  });
+  const inOrder = new Set<number>();
+  for (let i = len.indexOf(Math.max(0, ...len)); i >= 0; i = prev[i]) inOrder.add(i);
+  return new Set(kept.filter((_, i) => !inOrder.has(i)).map((p) => p.b));
+}
+
 export function diffRules(base: EmisReport, target: EmisReport, ctx: RuleDiffContext): RuleDiff[] {
   const bv = makeViews('base', base, ctx);
   const tv = makeViews('target', target, ctx);
@@ -349,7 +380,9 @@ export function diffRules(base: EmisReport, target: EmisReport, ctx: RuleDiffCon
   const groupSig = (grp: Group) =>
     [grp.kind, grp.kind === 'column' ? grp.g.displayName : '', ...grp.g.criteria.map((c) => `${c.table} ${c.displayName}`), ...popLines(grp, 'target').map((l) => l.text)].join(' ');
 
-  return align(groupsOf(base), groupsOf(target), { id: (x) => `${x.kind}:${x.g.id}`, sig: groupSig, threshold: 0.3 }).map(({ b, t }) => {
+  const pairs = align(groupsOf(base), groupsOf(target), { id: (x) => `${x.kind}:${x.g.id}`, sig: groupSig, threshold: 0.3 });
+  const moved = movedRules(pairs);
+  return pairs.map(({ b, t }) => {
     const one = (b ?? t)!;
     const head = (grp: Group) => ({
       kind: grp.kind,
@@ -381,14 +414,16 @@ export function diffRules(base: EmisReport, target: EmisReport, ctx: RuleDiffCon
       ...(hb.pass !== ht.pass ? { passFrom: hb.pass } : {}),
       ...(hb.fail !== ht.fail ? { failFrom: hb.fail } : {}),
     };
+    const reordered = moved.has(b);
     const status =
-      Object.keys(changes).length || hb.label !== ht.label
+      Object.keys(changes).length || hb.label !== ht.label || reordered
         ? 'changed'
         : worst([columns?.status ?? 'unchanged', ...[...criteria, ...population, ...libraryItems].map((x) => x.status)]);
     return {
       status,
       number: t.n,
       ...(b.n !== t.n ? { previousNumber: b.n } : {}),
+      ...(reordered ? { reordered: true } : {}),
       ...ht,
       ...(columns ? { columns } : {}),
       ...changes,
@@ -417,6 +452,8 @@ export function ruleChangeKind(rules: RuleDiff[]): 'logic' | 'codes' | 'none' {
     c.status === 'added' ||
     c.status === 'removed' ||
     c.negationFrom !== undefined ||
+    c.tableFrom !== undefined ||
+    c.nameFrom !== undefined ||
     line(c.relationship) ||
     [...c.filters, ...c.restrictions, ...c.tests].some(line) ||
     c.linked.some(criterion) ||
@@ -425,7 +462,7 @@ export function ruleChangeKind(rules: RuleDiff[]): 'logic' | 'codes' | 'none' {
     (r) =>
       r.status === 'added' ||
       r.status === 'removed' ||
-      !!(r.passFrom || r.failFrom || r.operatorFrom) ||
+      !!(r.passFrom || r.failFrom || r.operatorFrom || r.reordered) ||
       line(r.columns) ||
       [...r.population, ...r.libraryItems].some(line) ||
       r.criteria.some(criterion)

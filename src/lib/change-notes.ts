@@ -3,19 +3,34 @@
  * action changed) and detection of routine year rollovers, from the before and after text of a change.
  */
 
-const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec';
+const MONTHS = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 const pad2 = (n: number) => String(n % 100).padStart(2, '0');
-const YEARS = new RegExp(`(?<!\\d)((?:19|20)\\d\\d)-(\\d\\d)(?!\\d)|(?<!\\d)((?:19|20)\\d\\d)(?!\\d)|((?:${MONTHS})\\s?)(\\d\\d)(?!\\d)`, 'gi');
+const YEAR = '(?:19|20)\\d\\d';
+// Years only where text marks them as years, so a threshold such as ">= 2000" is not one
+const YEARS = [
+  `(?<!\\d)(?<fy>${YEAR})(?<sep>[-/])(?<fyy>\\d\\d)(?![\\d/-])`, // 2025-26, 2025/26
+  `(?<=\\d{1,2}/\\d{1,2}/)(?<dy>${YEAR})(?!\\d)`, // 01/04/2025
+  `(?<label>(?:${MONTHS}|FY)[\\s-]?)(?<ly>(?:19|20)?\\d\\d)(?!\\d)`, // APR25, April 2025, FY25
+];
+const DATED = new RegExp(YEARS.join('|'), 'gi');
+// Names and folders label releases with a bare year: "QOF 2025"
+const LABELLED = new RegExp([...YEARS, `(?<![\\d.])(?<y>${YEAR})(?![\\d.])`].join('|'), 'gi');
 
-/** The text with every year moved on by one: 2025 → 2026, 2025-26 → 2026-27, Apr25 → Apr26 */
-export function rollYear(s: string): string {
-  return s.replace(YEARS, (_m, fy?: string, fyy?: string, y?: string, mon?: string, yy?: string) =>
-    fy ? `${+fy + 1}-${pad2(+fyy! + 1)}` : y ? `${+y + 1}` : `${mon}${pad2(+yy! + 1)}`
-  );
+type YearGroups = Partial<Record<'fy' | 'sep' | 'fyy' | 'dy' | 'label' | 'ly' | 'y', string>>;
+
+/** The text with every year moved on by one: 01/04/2025 → 01/04/2026, 2025-26 → 2026-27, Apr25 → Apr26; `bare` also moves lone years */
+export function rollYear(s: string, bare = false): string {
+  return s.replace(bare ? LABELLED : DATED, (...args) => {
+    const g = args[args.length - 1] as YearGroups;
+    if (g.fy) return `${+g.fy + 1}${g.sep}${pad2(+g.fyy! + 1)}`;
+    if (g.dy) return `${+g.dy + 1}`;
+    if (g.label) return `${g.label}${g.ly!.length === 4 ? +g.ly! + 1 : pad2(+g.ly! + 1)}`;
+    return `${+g.y! + 1}`;
+  });
 }
 
-/** True when the only difference is every year moving on by one, as in an annual release */
-export const isRollover = (before: string, after: string) => before !== after && rollYear(before) === after;
+/** True when the only difference is every year moving on by one, as in an annual release; `bare` for names and folders */
+export const isRollover = (before: string, after: string, bare = false) => before !== after && rollYear(before, bare) === after;
 
 const COMPARISON = /(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)/g;
 const comparisons = (s: string) => [...s.matchAll(COMPARISON)].map((m) => ({ op: m[1], n: m[2] }));
@@ -46,10 +61,13 @@ function boundaryNote(before: string, after: string, general: boolean): string |
 function windowNote(before: string, after: string): string | undefined {
   const b = before.match(WINDOW);
   const a = after.match(WINDOW);
-  if (!b || !a) return undefined;
+  // Flipping after ⇄ before is a different window, not a wider or narrower one
+  if (!b || !a || /after/i.test(a[1]) !== /after/i.test(b[1])) return undefined;
   const days = (m: RegExpMatchArray) => +m[2] * UNIT_DAYS[m[3].toLowerCase()];
   if (days(b) !== days(a)) {
-    return `Look-back ${days(a) > days(b) ? 'widened' : 'narrowed'} from ${b[2]} ${b[3]}${+b[2] === 1 ? '' : 's'} to ${a[2]} ${a[3]}${+a[2] === 1 ? '' : 's'}`;
+    // "after N months before" spans the last N months, so a larger N widens it; "before N months before" spans everything older, so it narrows
+    const since = /after/i.test(a[1]);
+    return `Look-back ${days(a) > days(b) === since ? 'widened' : 'narrowed'} from ${b[2]} ${b[3]}${+b[2] === 1 ? '' : 's'} to ${a[2]} ${a[3]}${+a[2] === 1 ? '' : 's'}`;
   }
   const inclusive = (r: string) => /on or/i.test(r);
   if (inclusive(a[1]) && !inclusive(b[1])) return 'Window now includes its boundary day';

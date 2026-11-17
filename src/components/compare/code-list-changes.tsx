@@ -108,14 +108,23 @@ async function expandSide(name: string, vs: EmisValueSet, filter: ReturnType<typ
   return { concepts, failed: (group?.failedCodes?.length ?? 0) + (group?.dmdCodes?.length ?? 0) };
 }
 
+/** Everything that changes an expansion, so distinct inputs never share a cached result */
+const sideKey = (codes: CodeRef[]) =>
+  codes.map((c) => [c.codeSystem, c.code, c.excluded ? 'x' : '', c.includeChildren ? 'c' : '', c.isRefset ? 'r' : ''].join(':')).join(',');
+
 function compareConcepts(l: CodeListDetail, filter: ReturnType<typeof useSettings>['equivalenceFilter']): Promise<ConceptComparison> {
+  // Kept codes hold the newer flags; the older side expands with the include-children value it had
+  const baseChildren = new Map(l.childrenChanged.map((c) => [c.code, c.from]));
+  const kept = l.codesKept.map((c) => (!c.excluded && baseChildren.has(c.code) ? { ...c, includeChildren: baseChildren.get(c.code)! } : c));
+  const before = [...l.codesRemoved, ...kept];
+  const after = [...l.codesAdded, ...l.codesKept];
   // Keyed by content, so the same list in another search reuses the expansion
-  const key = `${l.cluster}\u0000${filter}\u0000${[...l.codesKept, ...l.codesAdded, ...l.codesRemoved].map((c) => `${c.excluded ? 'x' : ''}${c.code}`).join(',')}`;
+  const key = [filter, sideKey(before), sideKey(after)].join('\u0000');
   let p = comparisons.get(key);
   if (!p) {
     p = Promise.all([
-      expandSide(l.name, asValueSet(`${l.name}-before`, l.previousCluster !== undefined ? l.previousCluster : l.cluster, [...l.codesKept, ...l.codesRemoved]), filter),
-      expandSide(l.name, asValueSet(`${l.name}-after`, l.cluster, [...l.codesKept, ...l.codesAdded]), filter),
+      expandSide(l.name, asValueSet(`${l.name}-before`, l.previousCluster !== undefined ? l.previousCluster : l.cluster, before), filter),
+      expandSide(l.name, asValueSet(`${l.name}-after`, l.cluster, after), filter),
     ]).then(([b, a]) => ({
       before: b.concepts.size,
       after: a.concepts.size,
@@ -152,14 +161,21 @@ function ConceptList({ sign, concepts }: { sign: '+' | '−'; concepts: Concept[
  */
 export function ConceptCompare({ list }: { list: CodeListDetail }) {
   const { equivalenceFilter } = useSettings();
-  const [state, setState] = useState<{ status: 'idle' | 'loading' | 'done' | 'error'; result?: ConceptComparison; error?: string }>({ status: 'idle' });
+  type State = { status: 'idle' | 'loading' | 'done' | 'error'; filter?: typeof equivalenceFilter; result?: ConceptComparison; error?: string };
+  const [raw, setState] = useState<State>({ status: 'idle' });
   const [open, setOpen] = useState<'gained' | 'lost' | null>(null);
   if (list.status !== 'changed') return null;
+  if (list.keptOmitted) {
+    return <span className="text-xs text-muted-foreground">Concept comparison unavailable: retained codes were left out to keep this comparison under the response size limit.</span>;
+  }
+  // A result for another equivalence filter is stale
+  const state: State = raw.filter === equivalenceFilter ? raw : { status: 'idle' };
   const run = () => {
-    setState({ status: 'loading' });
-    compareConcepts(list, equivalenceFilter).then(
-      (result) => setState({ status: 'done', result }),
-      (e) => setState({ status: 'error', error: e instanceof Error ? e.message : String(e) })
+    const filter = equivalenceFilter;
+    setState({ status: 'loading', filter });
+    compareConcepts(list, filter).then(
+      (result) => setState((s) => (s.filter === filter ? { status: 'done', filter, result } : s)),
+      (e) => setState((s) => (s.filter === filter ? { status: 'error', filter, error: e instanceof Error ? e.message : String(e) } : s))
     );
   };
   if (state.status === 'idle') {

@@ -96,3 +96,16 @@ test('markdown shows each delta as before ⇒ after with codes in a details bloc
   assert.match(md, /<details><summary>\+1 \/ −1 codes<\/summary>/);
   assert.match(md, /\| \+ \| `3` \| Concept 3 \|/);
 });
+
+test('readableDelta keeps the shared value on both sides of a one-sided edit', () => {
+  const parts = readableDelta('numeric value 90', 'numeric value < 90');
+  assert.equal(parts.filter((p) => p.op !== 'add').map((p) => p.text).join(''), 'numeric value 90');
+  assert.equal(parts.filter((p) => p.op !== 'del').map((p) => p.text).join(''), 'numeric value < 90');
+});
+
+test('rules left out for size are reported, not shown as an empty search', () => {
+  const trimmed = { ...result, entries: result.entries.map((e) => ({ ...e, rules: undefined, rulesOmitted: true })) };
+  const md = renderPatchNotesMarkdown(buildPatchNotes(trimmed));
+  assert.match(md, /Rules left out to keep the response small/);
+  assert.doesNotMatch(md, /No rules of its own/);
+});

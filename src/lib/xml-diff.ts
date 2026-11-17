@@ -121,6 +121,8 @@ export interface SearchDiffEntry {
   rules?: RuleDiff[];
   /** Set when rules were dropped to keep an API response small */
   rulesOmitted?: boolean;
+  /** Set when codesKept was dropped to keep an API response small; concepts cannot then be compared */
+  codesKeptOmitted?: boolean;
   /** Unified diff of the implementation guide text (rule logic in plain English) */
   guidePatch?: string;
   /** Full guide for added/removed searches */
@@ -141,7 +143,7 @@ export interface SearchDiffEntry {
    * one, transitively; `outputCount` those among them nothing else depends on (indicators, call
    * lists), and `outputs` names the first 30.
    */
-  downstream?: { searches: number; outputCount: number; outputs: Array<{ folder: string; name: string }> };
+  downstream?: { searches: number; outputCount: number; outputs: Array<{ folder: string; name: string; parent?: string }> };
   /** Changed and in-scope searches: modified, added or removed searches they depend on through parents or population criteria, transitively */
   upstreamChanges?: UpstreamChange[];
 }
@@ -200,7 +202,7 @@ export interface XmlDiffResult {
   folderMoves: FolderMove[];
   scope?: DiffScopeSummary;
   /** Present when guides or code lists were dropped to fit a size limit */
-  trimmed?: { guides: number; codeLists: number; rules?: number };
+  trimmed?: { guides: number; codeLists: number; keptCodes?: number; rules?: number };
   /** Every search; unchanged entries carry identity only */
   entries: SearchDiffEntry[];
 }
@@ -955,7 +957,10 @@ export function diffXmlDocuments(
     if (!reach.length) continue;
     const outputs = reach
       .filter((d) => !dependants.get(d)?.length)
-      .map((d) => ({ folder: entryRef(d).folder, name: entryRef(d).name }))
+      .map((d) => {
+        const r = entryRef(d);
+        return { folder: r.folder, name: r.name, ...(r.parent ? { parent: r.parent } : {}) };
+      })
       .sort((a, b) => `${a.folder}${a.name}`.localeCompare(`${b.folder}${b.name}`));
     e.downstream = { searches: reach.length, outputCount: outputs.length, outputs: outputs.slice(0, MAX_OUTPUTS) };
   }
@@ -1134,6 +1139,18 @@ export function trimForTransport(result: XmlDiffResult, maxBytes: number): XmlDi
       }),
     };
   }
+  // Retained codes only serve concept comparison; drop them before rule views
+  let keptCodes = 0;
+  if (size(out) > maxBytes) {
+    out = {
+      ...out,
+      entries: out.entries.map((e) => {
+        if (!e.codesKept?.length) return e;
+        keptCodes++;
+        return { ...e, codesKept: [], codesKeptOmitted: true };
+      }),
+    };
+  }
   // Rule views go last: those of added/removed searches (the guide still shows them), then modified ones
   let rules = 0;
   for (const wholeOnly of [true, false]) {
@@ -1147,7 +1164,7 @@ export function trimForTransport(result: XmlDiffResult, maxBytes: number): XmlDi
       }),
     };
   }
-  out.trimmed = { guides, codeLists, ...(rules ? { rules } : {}) };
+  out.trimmed = { guides, codeLists, ...(keptCodes ? { keptCodes } : {}), ...(rules ? { rules } : {}) };
   if (size(out) > maxBytes) {
     throw new Error('Diff is too large to return. The files may be unrelated; use scripts/diff-xml.ts for the full output.');
   }
@@ -1179,11 +1196,22 @@ export interface CodeListDetail extends CodeListChange {
   codesAdded: CodeRef[];
   codesRemoved: CodeRef[];
   codesKept: CodeRef[];
+  /** Kept codes whose include-children flag changed; the older side expands with `from` */
+  childrenChanged: SearchDiffEntry['codesChildrenChanged'];
+  /** Retained codes were dropped from the response, so the older and newer lists cannot be rebuilt */
+  keptOmitted?: boolean;
 }
 
 /** Code list changes with their added and removed codes */
 export function codeListDetails(e: SearchDiffEntry): CodeListDetail[] {
-  const details = (e.codeLists ?? []).map((l) => ({ ...l, codesAdded: [] as CodeRef[], codesRemoved: [] as CodeRef[], codesKept: [] as CodeRef[] }));
+  const details: CodeListDetail[] = (e.codeLists ?? []).map((l) => ({
+    ...l,
+    codesAdded: [],
+    codesRemoved: [],
+    codesKept: [],
+    childrenChanged: e.codesChildrenChanged.filter((c) => c.list === l.name),
+    ...(e.codesKeptOmitted ? { keptOmitted: true } : {}),
+  }));
   const find = (c: CodeRef) => {
     const named = details.filter((d) => d.name === c.list);
     return named.length === 1 ? named[0] : named.find((d) => d.cluster === c.cluster || d.previousCluster === c.cluster);

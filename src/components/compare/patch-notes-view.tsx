@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { CalendarClock, ChevronDown, ChevronRight, Folder, Info, ListTree, Network, Sparkles } from 'lucide-react';
-import { buildPatchNotes, codeTally, type CodeNote, type DetailLine, type Highlight, type NoteGroup, type NoteLine, type PropertyNote, type SearchNote } from '@/lib/patch-notes';
+import { buildPatchNotes, codeTally, RULES_OMITTED, type CodeNote, type DetailLine, type Highlight, type NoteGroup, type NoteLine, type PropertyNote, type SearchNote } from '@/lib/patch-notes';
 import type { PatchPart } from '@/lib/patch-view';
 import type { XmlDiffResult } from '@/lib/xml-diff';
 import { useCompare } from '@/contexts/CompareContext';
@@ -223,7 +223,7 @@ function Reach({ note }: { note: SearchNote }) {
       {open && r.outputs.length > 0 && (
         <ul className="mt-1.5 columns-1 gap-6 border-l-2 border-violet-200 pl-3 text-[13px] lg:columns-2">
           {r.outputs.map((o) => (
-            <li key={`${o.folder}${o.name}`} className="break-inside-avoid py-0.5">
+            <li key={`${o.folder}|${o.name}|${o.parent ?? ''}`} className="break-inside-avoid py-0.5">
               <button type="button" onClick={() => selectByRef(o)} className="text-left hover:underline">
                 {o.name}
               </button>
@@ -234,6 +234,17 @@ function Reach({ note }: { note: SearchNote }) {
       )}
     </div>
   );
+}
+
+/** Keys cards by search identity, so open folds follow the search when filters reorder the list */
+function cardKeys(notes: SearchNote[]): Array<[string, SearchNote]> {
+  const seen = new Map<string, number>();
+  return notes.map((n) => {
+    const base = [n.ref.type, n.ref.folder, n.ref.name, n.ref.parent ?? ''].join('|');
+    const k = seen.get(base) ?? 0;
+    seen.set(base, k + 1);
+    return [k ? `${base}|${k}` : base, n];
+  });
 }
 
 function SearchCard({ note, accent }: { note: SearchNote; accent: 'modified' | 'added' | 'removed' }) {
@@ -284,7 +295,10 @@ function SearchCard({ note, accent }: { note: SearchNote; accent: 'modified' | '
               </div>
             </li>
           ))}
-          {note.rules && !note.rules.length && <li className="py-1.5 text-sm text-muted-foreground">No rules of its own; it reports on its parent population.</li>}
+          {note.rulesOmitted && <li className="py-1.5 text-sm italic text-muted-foreground">{RULES_OMITTED}.</li>}
+          {!note.rulesOmitted && note.rules && !note.rules.length && (
+            <li className="py-1.5 text-sm text-muted-foreground">No rules of its own; it reports on its parent population.</li>
+          )}
           {routineCount > 0 && (
             <li className="py-1.5">
               <button type="button" onClick={() => setRoutineOpen(!routineOpen)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
@@ -383,14 +397,14 @@ export function PatchNotesView({ result, scopeOnly }: { result: XmlDiffResult; s
       )}
 
       <Section title="Changed searches" count={notes.changed.length} hint="furthest-reaching first; year rollovers folded">
-        {notes.changed.map((n, i) => (
-          <SearchCard key={i} note={n} accent="modified" />
+        {cardKeys(notes.changed).map(([k, n]) => (
+          <SearchCard key={k} note={n} accent="modified" />
         ))}
       </Section>
 
       <Section title="New searches" count={notes.added.length}>
-        {notes.added.map((n, i) => (
-          <SearchCard key={i} note={n} accent="added" />
+        {cardKeys(notes.added).map(([k, n]) => (
+          <SearchCard key={k} note={n} accent="added" />
         ))}
       </Section>
 

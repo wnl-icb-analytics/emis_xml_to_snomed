@@ -132,3 +132,30 @@ test('ruleChangeKind separates code-list-only changes from logic changes', () =>
   const same = diffRules(report([group('g1', [criterion('c1', bp)])]), report([group('g1', [criterion('c1', bp)])]), ctx);
   assert.equal(ruleChangeKind(same), 'none');
 });
+
+test('swapped rules are a logic change; an inserted rule only renumbers', () => {
+  const a = group('ga', [criterion('ca', bp)]);
+  const b = group('gb', [criterion('cb', frail)], { actionIfTrue: 'REJECT', actionIfFalse: 'NEXT' });
+  const swapped = diffRules(report([a, b]), report([b, a]), ctx);
+  assert.equal(swapped.filter((r) => r.reordered).length, 1);
+  assert.equal(ruleChangeKind(swapped), 'logic');
+  const inserted = diffRules(report([a, b]), report([group('gn', [criterion('cn', vs('n', 'NEW_COD', ['7']))]), a, b]), ctx);
+  assert.ok(inserted.every((r) => !r.reordered));
+  assert.deepEqual(
+    inserted.map((r) => [r.status, r.number, r.previousNumber]),
+    [
+      ['added', 1, undefined],
+      ['unchanged', 2, 1],
+      ['unchanged', 3, 2],
+    ]
+  );
+});
+
+test('a criterion that changes table keeps the older one', () => {
+  const rules = diffRules(report([group('g1', [criterion('c1', bp)])]), report([group('g1', [criterion('c1', bp, undefined, { table: 'PATIENTS' })])]), ctx);
+  const c = rules[0].criteria[0];
+  assert.equal(c.status, 'changed');
+  assert.equal(c.tableFrom, 'EVENTS');
+  assert.equal(c.table, 'PATIENTS');
+  assert.equal(ruleChangeKind(rules), 'logic');
+});
